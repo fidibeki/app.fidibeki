@@ -1,9 +1,48 @@
 import type { FeatureEntry } from './types'
 
 export const features: FeatureEntry[] = [
+{
+  "slug": "website-conversations",
+  "name": "Live chat for SaaS teams",
+  "loopStage": "Communicate",
+  "icon": "message-circle",
+  "availability": "All plans",
+  "tagline": "Talk to active visitors. Turn useful conversations into tracked work.",
+  "summary": "For small SaaS teams that want to understand a problem while someone is using the product. Start a website conversation, link a visitor message to an issue, and return to the same chat to explain what changed.",
+  "highlights": [
+    "See active visitors and send a personal message",
+    "Choose whether visitors can start conversations",
+    "Create an issue from a visitor message or link an existing one",
+    "Keep the conversation linked without copying the full transcript",
+    "Return from the issue to the conversation to send a reply"
+  ],
+  "sections": [
+    {
+      "heading": "Ask while the experience is fresh",
+      "body": "Choose an online visitor and ask how things are going. Their reply appears in your workspace. You can also enable visitor-started conversations for each project, so people can leave a message when your team is away."
+    },
+    {
+      "heading": "Give a useful message somewhere to go",
+      "body": "When a message points to work, create an issue or link it to an existing issue in the same project. Write a summary for your team. The source conversation stays attached as a reference, and the issue keeps its status, priority and internal discussion. Several conversations can support the same issue."
+    },
+    {
+      "heading": "Finish with a reply",
+      "body": "Open the linked conversation from the issue and write back to the visitor. This is a reply your team sends, not an automatic status notification. Internal issue notes stay private. Chat replies remain available while the visitor session is valid; email updates for opted-in feedback reporters are a separate workflow."
+    },
+    {
+      "heading": "Keep each website separate",
+      "body": "Conversations and issue links belong to one project. Team permissions control who can read, reply and create links. Deleting a conversation removes its links; an issue summary you wrote remains with the issue. Scheduled cleanup removes conversations after 180 days without new messages, unless a legal hold applies."
+    }
+  ],
+  "related": [
+    "feedback-widget",
+    "issue-tracking",
+    "reporter-loop"
+  ]
+},
   {
     slug: 'feedback-widget',
-    name: 'Feedback widget',
+    name: 'Website feedback widget',
     loopStage: 'Capture',
     tagline: 'Collect feedback where it happens, with tools reporters choose to use.',
     summary:
@@ -147,7 +186,7 @@ export const features: FeatureEntry[] = [
     sections: [
       {
         heading: 'From black hole to feedback loop',
-        body: 'Most feedback tools end at the inbox. Fidibeki tracks each issue to resolution and, for reporters who opt in, tells them what happened. Updates are sent asynchronously, so triage stays fast, and reporters who opted in see honest progress instead of silence.',
+        body: 'Track each issue to resolution and send updates to feedback reporters who opted in. For website conversations, open the linked chat and send a personal reply. Both paths keep the person who raised the problem in the discussion.',
       },
       {
         heading: 'Respectful by default',

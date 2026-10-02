@@ -1,7 +1,11 @@
 <script setup lang="ts">
+const { copy } = useMarketingI18n()
+
 import { onMounted } from 'vue'
 
-withDefaults(defineProps<{ variant?: 'inline' | 'block' }>(), { variant: 'inline' })
+withDefaults(defineProps<{ variant?: 'inline' | 'block' }>(), {
+  variant: 'inline',
+})
 
 const { status, load, configured, statusPageUrl } = useServiceStatus()
 
@@ -21,7 +25,9 @@ const href = statusPageUrl || 'https://status.fidibeki.com'
     target="_blank"
   >
     <span class="status-dot" aria-hidden="true" />
-    <span class="status-label">{{ configured ? status.label : 'Service status' }}</span>
+    <span class="status-label">{{
+      copy(configured ? status.label : 'Service status')
+    }}</span>
   </a>
 </template>
 
@@ -46,7 +52,9 @@ const href = statusPageUrl || 'https://status.fidibeki.com'
   font-size: 0.82rem;
   line-height: 1.3;
   text-decoration: none;
-  transition: border-color 160ms ease, color 160ms ease;
+  transition:
+    border-color 160ms ease,
+    color 160ms ease;
 }
 
 :global(html[data-theme='dark']) .status-pill {

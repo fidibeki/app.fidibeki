@@ -13,8 +13,13 @@ beforeAll(async () => {
   await writeFile(path.join(fixtureDir, '200.html'), '<html></html>')
   await writeFile(path.join(fixtureDir, '404.html'), '<html></html>')
   await mkdir(path.join(fixtureDir, 'pricing'), { recursive: true })
-  await writeFile(path.join(fixtureDir, 'pricing', 'index.html'), '<html></html>')
-  await mkdir(path.join(fixtureDir, 'features', 'session-replay'), { recursive: true })
+  await writeFile(
+    path.join(fixtureDir, 'pricing', 'index.html'),
+    '<html></html>',
+  )
+  await mkdir(path.join(fixtureDir, 'features', 'session-replay'), {
+    recursive: true,
+  })
   await writeFile(
     path.join(fixtureDir, 'features', 'session-replay', 'index.html'),
     '<html></html>',
@@ -45,8 +50,40 @@ describe('sitemap generation', () => {
     expect(xml).toContain('<?xml version="1.0" encoding="UTF-8"?>')
     expect(xml).toContain('<loc>https://fidibeki.com/</loc>')
     expect(xml).toContain('<loc>https://fidibeki.com/pricing</loc>')
-    expect(xml).toContain('<loc>https://fidibeki.com/features/session-replay</loc>')
+    expect(xml).toContain(
+      '<loc>https://fidibeki.com/features/session-replay</loc>',
+    )
     expect(xml).not.toContain('404.html')
     expect(xml).not.toContain('200.html')
   })
+})
+
+it('lists only existing language counterparts, including self and x-default', () => {
+  const xml = buildSitemap(
+    ['/pricing', '/pt/pricing', '/es/pricing', '/fr/pricing', '/pricing'],
+    'https://fidibeki.com',
+  )
+  expect(xml.match(/<url>/g)).toHaveLength(4)
+  for (const entry of xml.matchAll(/<url>([\s\S]*?)<\/url>/g)) {
+    expect(entry[1]).toContain(
+      'hreflang="en" href="https://fidibeki.com/pricing"',
+    )
+    expect(entry[1]).toContain(
+      'hreflang="pt-PT" href="https://fidibeki.com/pt/pricing"',
+    )
+    expect(entry[1]).toContain(
+      'hreflang="es" href="https://fidibeki.com/es/pricing"',
+    )
+    expect(entry[1]).toContain(
+      'hreflang="fr" href="https://fidibeki.com/fr/pricing"',
+    )
+    expect(entry[1]).toContain(
+      'hreflang="x-default" href="https://fidibeki.com/pricing"',
+    )
+  }
+  const partial = buildSitemap(
+    ['/pricing', '/pt/pricing'],
+    'https://fidibeki.com',
+  )
+  expect(partial).not.toContain('/fr/pricing')
 })

@@ -1,16 +1,9 @@
 <script setup lang="ts">
-import { ArrowRight, BookOpen, Briefcase, Check, Clock, LifeBuoy, ScrollText, ShieldCheck } from '@lucide/vue'
+const { copy } = useMarketingI18n()
+
+import { ArrowRight, Check } from '@lucide/vue'
 import { contactChannels } from '~/data/site'
 import { trialDays } from '~/data/pricing'
-
-// One icon per destination. Four identical envelopes would make the reader
-// parse the labels to tell the routes apart.
-const channelIcons = {
-  support: LifeBuoy,
-  security: ShieldCheck,
-  privacy: ScrollText,
-  sales: Briefcase,
-} as const
 
 const links = useAppLinks()
 
@@ -56,42 +49,59 @@ const includeInReport = [
 <template>
   <div>
     <PageHero
-      eyebrow="Support"
-      title="Help, and how to get it quickly"
-      lede="Most questions have a written answer already. For the rest, there is a real person at the other end of the address — and a short list of details that turns one slow exchange into one useful reply."
+      :eyebrow="copy('Support')"
+      :title="copy('Help, and how to get it quickly')"
+      :lede="
+        copy(
+          'Most questions have a written answer already. For the rest, there is a real person at the other end of the address — and a short list of details that turns one slow exchange into one useful reply.',
+        )
+      "
     >
       <template #breadcrumbs>
-        <Breadcrumbs :items="[{ name: 'Home', path: '/' }, { name: 'Support', path: '/support' }]" />
+        <Breadcrumbs
+          :items="[
+            { name: 'Home', path: '/' },
+            { name: 'Support', path: '/support' },
+          ]"
+        />
       </template>
     </PageHero>
 
     <section class="section">
       <div class="container">
         <div class="section-head">
-          <h2>Start with the guides</h2>
+          <h2>{{ copy('Start with the guides') }}</h2>
           <p class="lede">
-            These three cover most of what people write in about. They are short, and they are
-            honest about the parts that trip people up.
+            {{
+              copy(
+                'These three cover most of what people write in about. They are short, and they are honest about the parts that trip people up.',
+              )
+            }}
           </p>
         </div>
 
         <div class="start-grid">
-          <NuxtLink
-            v-for="(item, index) in startingPoints"
+          <NuxtLinkLocale
+            v-for="item in startingPoints"
             :key="item.to"
-            v-reveal="index * 60"
             :to="item.to"
-            class="card start-card"
+            class="start-card"
           >
-            <span class="start-icon"><BookOpen :size="20" aria-hidden="true" /></span>
-            <h3>{{ item.title }}</h3>
-            <p>{{ item.body }}</p>
-            <span class="start-meta">Read the guide <ArrowRight :size="14" aria-hidden="true" /></span>
-          </NuxtLink>
+            <h3>{{ copy(item.title) }}</h3>
+            <p>{{ copy(item.body) }}</p>
+            <span class="start-meta"
+              >{{ copy('Read the guide') }}
+              <ArrowRight :size="14" aria-hidden="true"
+            /></span>
+          </NuxtLinkLocale>
         </div>
 
         <p class="start-all">
-          Everything else lives in <NuxtLink to="/docs">the documentation</NuxtLink>.
+          {{ copy('Everything else lives in') }}
+          <NuxtLinkLocale to="/docs">{{
+            copy('the documentation')
+          }}</NuxtLinkLocale
+          >.
         </p>
       </div>
     </section>
@@ -99,26 +109,27 @@ const includeInReport = [
     <section class="section channels-section">
       <div class="container">
         <div class="section-head">
-          <h2>Write to the right address</h2>
+          <h2>{{ copy('Write to the right address') }}</h2>
           <p class="lede">
-            Four mailboxes, so your message lands with whoever can actually act on it. If you are
-            unsure, use support and we will route it.
+            {{
+              copy(
+                'Four mailboxes, so your message lands with whoever can actually act on it. If you are unsure, use support and we will route it.',
+              )
+            }}
           </p>
         </div>
 
         <div class="channel-grid">
           <div
-            v-for="(channel, index) in contactChannels"
+            v-for="channel in contactChannels"
             :key="channel.key"
-            v-reveal="index * 60"
-            class="card channel-card"
+            class="channel-card"
           >
-            <span class="channel-icon">
-              <component :is="channelIcons[channel.key]" :size="18" aria-hidden="true" />
-            </span>
-            <h3>{{ channel.label }}</h3>
-            <p>{{ channel.blurb }}</p>
-            <a :href="`mailto:${channel.email}`" class="channel-email">{{ channel.email }}</a>
+            <h3>{{ copy(channel.label) }}</h3>
+            <p>{{ copy(channel.blurb) }}</p>
+            <a :href="`mailto:${channel.email}`" class="channel-email">{{
+              copy(channel.email)
+            }}</a>
           </div>
         </div>
       </div>
@@ -126,37 +137,48 @@ const includeInReport = [
 
     <section class="section">
       <div class="container support-columns">
-        <div class="card include-card">
-          <h2>What to include</h2>
+        <div class="include-card">
+          <h2>{{ copy('What to include') }}</h2>
           <p class="include-intro">
-            None of this is mandatory. All of it removes a round trip.
+            {{
+              copy('None of this is mandatory. All of it removes a round trip.')
+            }}
           </p>
           <ul class="include-list">
             <li v-for="item in includeInReport" :key="item">
               <Check :size="16" aria-hidden="true" class="include-check" />
-              <span>{{ item }}</span>
+              <span>{{ copy(item) }}</span>
             </li>
           </ul>
         </div>
 
-        <div class="card expect-card">
-          <span class="expect-icon"><Clock :size="20" aria-hidden="true" /></span>
-          <h2>What to expect</h2>
+        <div class="expect-card">
+          <h2>{{ copy('What to expect') }}</h2>
           <p>
-            We aim to reply within one business day. That is a target we work to, not a contractual
-            service level — self-serve plans do not carry one, and we would rather say so than
-            publish a number we cannot stand behind. Enterprise agreements can include a commitment.
+            {{
+              copy(
+                'We aim to reply within one business day. That is a target we work to, not a contractual service level — self-serve plans do not carry one, and we would rather say so than publish a number we cannot stand behind. Enterprise agreements can include a commitment.',
+              )
+            }}
           </p>
           <p>
-            When something is broken, we will tell you it is broken. When something is not going to
-            be fixed soon, we will tell you that too, rather than leaving the thread open and quiet.
+            {{
+              copy(
+                'When something is broken, we will tell you it is broken. When something is not going to be fixed soon, we will tell you that too, rather than leaving the thread open and quiet.',
+              )
+            }}
           </p>
           <p class="expect-note">
-            Security reports follow their own path — see
-            <NuxtLink to="/security">how Fidibeki is secured</NuxtLink> before you send one.
+            {{ copy('Security reports follow their own path — see') }}
+            <NuxtLinkLocale to="/security">{{
+              copy('how Fidibeki is secured')
+            }}</NuxtLinkLocale>
+            {{ copy('before you send one.') }}
           </p>
           <div class="expect-status">
-            <span class="expect-status-label">Before you write, check live status:</span>
+            <span class="expect-status-label">{{
+              copy('Before you write, check live status:')
+            }}</span>
             <StatusPill variant="block" />
           </div>
         </div>
@@ -165,221 +187,217 @@ const includeInReport = [
 
     <section class="section trial-section">
       <div class="container">
-        <div class="card trial-card">
-          <h2>Not a customer yet?</h2>
+        <div class="trial-card">
+          <h2>{{ copy('Not a customer yet?') }}</h2>
           <p>
-            Setup questions before you buy are still support questions. Start the
-            {{ trialDays }}-day trial and write in, or bring your list to a demo and we will install
-            the widget with you.
+            {{
+              copy(
+                'Setup questions before you buy are still support questions. Start the',
+              )
+            }}
+            {{ copy(trialDays)
+            }}{{
+              copy(
+                '-day trial and write in, or bring your list to a demo and we will install the widget with you.',
+              )
+            }}
           </p>
           <div class="trial-actions">
-            <NuxtLink to="/sign-up" class="btn btn-primary">Start free trial</NuxtLink>
-            <a :href="links.demo" class="btn btn-ghost" rel="noopener" target="_blank">Book a demo</a>
+            <NuxtLinkLocale to="/sign-up" class="btn btn-primary">{{
+              copy('Start free trial')
+            }}</NuxtLinkLocale>
+            <a
+              :href="links.demo"
+              class="btn btn-ghost"
+              rel="noopener"
+              target="_blank"
+              >{{ copy('Book a demo') }}</a
+            >
           </div>
         </div>
       </div>
     </section>
 
-    <CtaSection
-      title="Still stuck?"
-      body="Write to support@fidibeki.com. The person answering is the person who built the thing you are asking about."
-    />
+    <section class="section support-close">
+      <div class="container">
+        <h2>{{ copy('Still stuck?') }}</h2>
+        <p>
+          {{
+            copy(
+              'The person answering is the person who built the thing you are asking about.',
+            )
+          }}
+        </p>
+        <a href="mailto:support@fidibeki.com">{{
+          copy('support@fidibeki.com')
+        }}</a>
+      </div>
+    </section>
   </div>
 </template>
 
 <style scoped>
-.start-grid,
-.channel-grid {
+.start-grid {
   display: grid;
-  grid-template-columns: 1fr;
-  gap: 1rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 40px;
 }
-
 .start-card {
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
-  color: var(--ink);
-  transition: border-color 160ms ease, transform 160ms ease;
+  align-items: flex-start;
+  border-top: 1px solid var(--line);
+  padding-top: 24px;
 }
-
-.start-card:hover {
-  text-decoration: none;
-  border-color: var(--accent);
-  transform: translateY(-3px);
-}
-
 .start-card h3,
 .channel-card h3 {
-  margin: 0;
-  font-size: 1.1rem;
+  font-size: 23px;
+  margin-bottom: 16px;
 }
-
 .start-card p,
 .channel-card p {
-  margin: 0;
+  margin: 0 0 24px;
+  font-size: 15px;
   color: var(--muted);
-  font-size: 0.94rem;
 }
-
-.start-icon,
-.channel-icon,
-.expect-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 42px;
-  height: 42px;
-  margin-bottom: 0.4rem;
-  border-radius: 10px;
-  background: var(--accent-soft);
-  color: var(--accent-text);
-}
-
 .start-meta {
   display: inline-flex;
   align-items: center;
-  gap: 0.3rem;
-  margin-top: 0.5rem;
-  font-size: 0.85rem;
-  font-weight: 600;
-  color: var(--accent-text);
+  gap: 10px;
+  font-size: 14px;
+  margin-top: auto;
 }
-
+.start-card:hover {
+  text-decoration: none;
+}
+.start-card:hover .start-meta {
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
 .start-all {
-  margin-top: 1.25rem;
+  margin: 36px 0 0;
   color: var(--muted);
+  font-size: 14px;
 }
-
+.start-all a {
+  color: var(--ink);
+  text-decoration: underline;
+}
 .channels-section {
-  background: var(--surface-soft);
+  padding-top: 24px;
 }
-
+.channel-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 40px 80px;
+}
 .channel-card {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
+  padding-top: 24px;
+  border-top: 1px solid var(--line);
 }
-
 .channel-email {
-  margin-top: 0.6rem;
-  font-size: 0.9rem;
-  font-weight: 600;
-  word-break: break-word;
+  display: inline-block;
+  font-size: 15px;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+  overflow-wrap: anywhere;
 }
-
 .support-columns {
   display: grid;
-  gap: 1.25rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 80px;
+  border-top: 1px solid var(--line);
+  padding-top: 36px;
 }
-
-.include-card,
-.expect-card {
-  display: flex;
-  flex-direction: column;
-}
-
 .include-card h2,
 .expect-card h2 {
-  margin: 0 0 0.4rem;
-  font-size: 1.25rem;
+  font-size: 28px;
+  margin-bottom: 20px;
 }
-
-.include-intro {
-  margin: 0 0 1rem;
+.include-intro,
+.expect-card p {
+  font-size: 15px;
   color: var(--muted);
-  font-size: 0.94rem;
 }
-
 .include-list {
   list-style: none;
-  margin: 0;
   padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.6rem;
+  margin: 28px 0 0;
+  display: grid;
+  gap: 20px;
 }
-
 .include-list li {
   display: flex;
-  gap: 0.55rem;
-  align-items: flex-start;
+  gap: 12px;
+  font-size: 15px;
   color: var(--ink-soft);
-  font-size: 0.94rem;
 }
-
 .include-check {
   flex-shrink: 0;
-  margin-top: 0.2rem;
-  color: var(--accent-text);
+  margin-top: 4px;
 }
-
-.expect-card p {
-  margin: 0 0 0.8rem;
-  color: var(--ink-soft);
-  font-size: 0.94rem;
-}
-
-.expect-note {
-  margin-bottom: 0;
-  font-size: 0.88rem;
-  color: var(--muted);
-}
-
 .expect-status {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.6rem;
-  margin-top: 1.1rem;
-  padding-top: 1.1rem;
+  gap: 12px;
+  padding-top: 24px;
+  margin-top: 24px;
   border-top: 1px solid var(--line);
 }
-
 .expect-status-label {
-  font-size: 0.88rem;
   color: var(--muted);
+  font-size: 13px;
 }
-
 .trial-section {
   padding-top: 0;
 }
-
 .trial-card {
-  text-align: center;
+  padding: 40px;
+  border-radius: 10px;
+  background: var(--surface-soft);
 }
-
 .trial-card h2 {
-  margin: 0 0 0.5rem;
-  font-size: 1.3rem;
+  font-size: 30px;
 }
-
 .trial-card p {
-  margin: 0 auto;
-  max-width: 40rem;
-  color: var(--ink-soft);
+  max-width: 640px;
+  color: var(--muted);
 }
-
 .trial-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.85rem;
-  justify-content: center;
-  margin-top: 1.4rem;
+  gap: 12px;
+  margin-top: 28px;
 }
-
-@media (min-width: 700px) {
-  .start-grid {
-    grid-template-columns: repeat(3, 1fr);
-  }
-
-  .channel-grid {
-    grid-template-columns: repeat(2, 1fr);
-  }
-
+.support-close {
+  padding-top: 0;
+}
+.support-close h2 {
+  font-size: 30px;
+}
+.support-close p {
+  color: var(--muted);
+}
+.support-close a {
+  display: inline-block;
+  text-decoration: underline;
+  text-underline-offset: 5px;
+}
+@media (max-width: 800px) {
+  .start-grid,
   .support-columns {
-    grid-template-columns: 1fr 1fr;
-    gap: 1.5rem;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 36px;
+  }
+}
+@media (max-width: 600px) {
+  .channel-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 32px;
+  }
+  .trial-card {
+    padding: 28px;
   }
 }
 </style>

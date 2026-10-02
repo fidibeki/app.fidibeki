@@ -28,6 +28,7 @@ import { vi } from 'vitest'
 
 describe('website chat widget', () => {
   it('only enables replies after the tenant initiates and keeps feedback in the same panel', async () => {
+    const language = vi.spyOn(navigator, 'languages', 'get').mockReturnValue(['pt-AO', 'en'])
     let current = emptyChat()
     let stream: ReadableStreamDefaultController<Uint8Array> | undefined
     const sent: unknown[] = []
@@ -48,6 +49,8 @@ describe('website chat widget', () => {
       const shadow = document.querySelector('#fidibeki-chat')!.shadowRoot!
       shadow.querySelector<HTMLButtonElement>('.launcher')!.click()
       await vi.waitFor(() => expect(fetcher).toHaveBeenCalled())
+      expect(fetcher.mock.calls.find(([url]) => String(url).includes('/session'))?.[1]?.body).toBe(JSON.stringify({ locale: 'pt-AO' }))
+      await vi.waitFor(() => expect(fetcher.mock.calls.some(([url, init]) => String(url).includes('/presence') && JSON.parse(String(init?.body)).locale === 'pt-AO')).toBe(true))
       expect(shadow.querySelector<HTMLElement>('.compose')!.hidden).toBe(true)
       current = thread([1]); current.conversation!.unread = 1
       await vi.waitFor(() => expect(stream).toBeDefined())
@@ -62,7 +65,7 @@ describe('website chat widget', () => {
       await vi.waitFor(() => expect(feedback).toHaveBeenCalled())
       expect(shadow.querySelector('.feedback')!.textContent).toBe('Existing feedback form')
       expect(document.querySelector('#fidibeki-chat')!.hasAttribute('data-fidibeki-block')).toBe(true)
-    } finally { chat.destroy() }
+    } finally { chat.destroy(); language.mockRestore() }
     expect(document.querySelector('#fidibeki-chat')).toBeNull()
   })
 })

@@ -1,3 +1,4 @@
+import { visitorLocale } from './chat-locale'
 import { chatStorageKey, readChatCredential, forgetChatCredential, type ChatCredential } from './chat-session'
 import { emptyChat, exportChat, prependChat, reconcileChat, watchSupport, type ChatMessage, type ChatThread, type LiveState } from '../../shared/website-chat'
 import { privacySafeLocation } from './privacy-location'
@@ -129,7 +130,7 @@ export function mountChat(options: ChatOptions) {
     if (sessionPromise) return sessionPromise
     const version = ++generation
     sessionPromise = (async () => {
-      const value = await request<Credential>('session', 'POST', {})
+      const value = await request<Credential>('session', 'POST', { locale: visitorLocale() })
       if (lifetime.signal.aborted || version !== generation) return
       storeCredential(value); thread = emptyChat(); previewDismissed = 0; pending = null; render()
     })().finally(() => { sessionPromise = null })
@@ -196,7 +197,7 @@ export function mountChat(options: ChatOptions) {
   async function heartbeat() {
     if (!credential || lifetime.signal.aborted || state === 'forbidden') return
     const page = currentRule ? privacySafeLocation(location.href, currentRule)?.target : `${location.origin}/`
-    try { await request('presence', 'PUT', { tab_id: tabID, page_url: page || `${location.origin}/`, state: !document.hidden && Date.now() - activeAt < 60_000 ? 'active' : 'idle' }) } catch { /* SSE reconnect supplies the recovery path. */ }
+    try { await request('presence', 'PUT', { locale: visitorLocale(), tab_id: tabID, page_url: page || `${location.origin}/`, state: !document.hidden && Date.now() - activeAt < 60_000 ? 'active' : 'idle' }) } catch { /* SSE reconnect supplies the recovery path. */ }
   }
   function connect() {
     stream?.abort(); stream = new AbortController()

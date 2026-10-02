@@ -44,11 +44,12 @@ type Options struct {
 }
 type Handler struct{ options Options }
 type scope struct {
-	rules                                                 []project.WidgetRule
-	tx                                                    db.Transaction
-	tenantID, projectID, visitorID, actorID, name, origin string
-	operator, enabled, notify, allowVisitorMessages       bool
-	expires                                               time.Time
+	rules                                                             []project.WidgetRule
+	tx                                                                db.Transaction
+	tenantID, projectID, visitorID, actorID, name, origin, tenantSlug string
+	permissions                                                       []string
+	operator, enabled, notify, allowVisitorMessages                   bool
+	expires                                                           time.Time
 }
 type failure struct {
 	status  int
@@ -73,6 +74,10 @@ func NewHandler(o Options) *Handler {
 func (h *Handler) RegisterTenantRoutes(r chi.Router) {
 	const b = "/v1/projects/{projectID}/chat"
 	r.Get(b+"/events", h.events(true))
+	r.Get(b+"/visitors/{visitorID}/issues", h.run(true, auth.PermissionChatRead, h.linkedIssues))
+	r.Post(b+"/visitors/{visitorID}/issues", h.run(true, auth.PermissionChatWrite, h.linkIssue))
+	r.Delete(b+"/visitors/{visitorID}/issues/{messageID}", h.run(true, auth.PermissionChatWrite, h.unlinkIssue))
+	r.Get(b+"/issues/{issueID}/conversations", h.run(true, auth.PermissionChatRead, h.issueConversations))
 	r.Delete(b+"/visitors/{visitorID}", h.run(true, auth.PermissionChatDelete, h.remove))
 	r.Get(b+"/online", h.run(true, auth.PermissionChatRead, h.online))
 	r.Get(b+"/conversations", h.run(true, auth.PermissionChatRead, h.inbox))
@@ -99,7 +104,10 @@ func validID(s string) bool {
 	return e == nil && id != uuid.Nil && id.String() == s
 }
 func decode(r *http.Request, v any) error {
-	d := json.NewDecoder(io.LimitReader(r.Body, 20000))
+	return decodeBounded(r, v, 20000)
+}
+func decodeBounded(r *http.Request, v any, limit int64) error {
+	d := json.NewDecoder(io.LimitReader(r.Body, limit))
 	d.DisallowUnknownFields()
 	if d.Decode(v) != nil {
 		return invalid()
@@ -140,6 +148,7 @@ func (h *Handler) authorize(r *http.Request, operator bool, permission auth.Perm
 			return nil, denied()
 		}
 		s.tenantID = t.ID
+		s.tenantSlug = t.Slug
 		s.projectID = chi.URLParam(r, "projectID")
 		s.visitorID = chi.URLParam(r, "visitorID")
 		if !validID(s.projectID) || (s.visitorID != "" && !validID(s.visitorID)) {
@@ -220,6 +229,7 @@ func (h *Handler) authorize(r *http.Request, operator bool, permission auth.Perm
 		if len([]rune(s.name)) > 120 {
 			s.name = string([]rune(s.name)[:120])
 		}
+		s.permissions = permissions
 		if !auth.HasPermission(permissions, permission) {
 			return nil, denied()
 		}
@@ -260,9 +270,13 @@ func (h *Handler) run(operator bool, p auth.Permission, action func(*http.Reques
 		// Read bounded input before taking a database connection. A slow visitor
 		// must not hold the shared pool while uploading a request body.
 		if r.Body != nil {
-			body, err := io.ReadAll(io.LimitReader(r.Body, 20001))
+			bodyLimit := int64(20000)
+			if operator && r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/issues") {
+				bodyLimit = issueLinkBodyLimit
+			}
+			body, err := io.ReadAll(io.LimitReader(r.Body, bodyLimit+1))
 			_ = r.Body.Close()
-			if err != nil || len(body) > 20000 {
+			if err != nil || int64(len(body)) > bodyLimit {
 				h.fail(w, r, invalid())
 				return
 			}
@@ -375,9 +389,15 @@ func (h *Handler) settings(r *http.Request, s *scope) (any, error) {
 	return map[string]any{"enabled": s.enabled, "allow_visitor_messages": s.allowVisitorMessages}, nil
 }
 func (h *Handler) session(r *http.Request, s *scope) (any, error) {
-	var input struct{}
+	var input struct {
+		Locale string `json:"locale"`
+	}
 	if err := decode(r, &input); err != nil {
 		return nil, err
+	}
+	locale, valid := normalizeVisitorLocale(input.Locale)
+	if !valid {
+		return nil, invalid()
 	}
 	secret := make([]byte, 32)
 	if _, err := rand.Read(secret); err != nil {
@@ -386,7 +406,7 @@ func (h *Handler) session(r *http.Request, s *scope) (any, error) {
 	token := s.visitorID + "." + base64.RawURLEncoding.EncodeToString(secret)
 	hash := sha256.Sum256([]byte(token))
 	expires := time.Now().UTC().Add(24 * time.Hour)
-	_, err := s.tx.Exec(r.Context(), `INSERT INTO website_chat_visitors(id,tenant_id,project_id,origin,token_hash,expires_at) VALUES($1,$2,$3,$4,$5,$6)`, s.visitorID, s.tenantID, s.projectID, s.origin, hash[:], expires)
+	_, err := s.tx.Exec(r.Context(), `INSERT INTO website_chat_visitors(id,tenant_id,project_id,origin,token_hash,expires_at,locale) VALUES($1,$2,$3,$4,$5,$6,$7)`, s.visitorID, s.tenantID, s.projectID, s.origin, hash[:], expires, locale)
 	return map[string]any{"token": token, "visitor_id": s.visitorID, "expires_at": expires}, err
 }
 func messageInput(r *http.Request) (string, string, error) {

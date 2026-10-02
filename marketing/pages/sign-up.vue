@@ -1,21 +1,28 @@
 <script setup lang="ts">
+const { copy } = useMarketingI18n()
+
 import { Check, ExternalLink } from '@lucide/vue'
 import { trialDays } from '~/data/pricing'
 
 const links = useAppLinks()
 
-useSiteMeta({
+useSiteMeta(() => ({
   title: 'Sign up',
-  description: `Create a Fidibeki workspace in about a minute. ${trialDays}-day free trial, no credit card required.`,
+  description: copy(
+    'Create a Fidibeki workspace in about a minute. {days}-day free trial, no credit card required.',
+    { days: copy(trialDays) },
+  ),
   path: '/sign-up',
   breadcrumbs: [
     { name: 'Home', path: '/' },
     { name: 'Sign up', path: '/sign-up' },
   ],
-})
+}))
 
 const included = [
-  `${trialDays} day free trial, no credit card required`,
+  copy('{days} day free trial, no credit card required', {
+    days: copy(trialDays),
+  }),
   'Your own workspace at your-team.fidibeki.com',
   'Feedback widget, issue triage, and reporter update tools from day one',
   'Passwordless sign-in for you and your team',
@@ -26,29 +33,40 @@ const included = [
   <div>
     <section class="section auth-section">
       <div class="container auth-inner">
-        <div class="card auth-card">
+        <div class="auth-card">
           <BrandMark class="auth-mark" />
-          <h1>Create your workspace</h1>
+          <h1>{{ copy('Create your workspace') }}</h1>
           <p class="lede">
-            Pick a workspace name, verify your email, and start capturing feedback.
+            {{
+              copy(
+                'Pick a workspace name, verify your email, and start capturing feedback.',
+              )
+            }}
           </p>
           <ul class="auth-list">
             <li v-for="item in included" :key="item">
               <Check :size="16" aria-hidden="true" class="auth-check" />
-              <span>{{ item }}</span>
+              <span>{{ copy(item) }}</span>
             </li>
           </ul>
           <a :href="links.signUp" class="btn btn-primary btn-large auth-cta">
-            Continue to sign up <ExternalLink :size="16" aria-hidden="true" />
+            {{ copy('Continue to sign up') }}
+            <ExternalLink :size="16" aria-hidden="true" />
           </a>
           <p class="auth-legal">
-            By creating a workspace you agree to our
-            <NuxtLink to="/tos">Terms of Service</NuxtLink> and
-            <NuxtLink to="/privacy">Privacy notice</NuxtLink>.
+            {{ copy('By creating a workspace you agree to our') }}
+            <NuxtLinkLocale to="/tos">{{
+              copy('Terms of Service')
+            }}</NuxtLinkLocale>
+            {{ copy('and') }}
+            <NuxtLinkLocale to="/privacy">{{
+              copy('Privacy notice')
+            }}</NuxtLinkLocale
+            >.
           </p>
           <p class="auth-alt">
-            Already have a workspace?
-            <a :href="links.signIn">Sign in</a>
+            {{ copy('Already have a workspace?') }}
+            <a :href="links.signIn">{{ copy('Sign in') }}</a>
           </p>
         </div>
       </div>
@@ -58,77 +76,65 @@ const included = [
 
 <style scoped>
 .auth-section {
-  min-height: 60vh;
-  display: flex;
-  align-items: center;
-  background: var(--hero-glow);
+  padding-block: 80px 100px;
 }
-
 .auth-inner {
   display: flex;
   justify-content: center;
 }
-
 .auth-card {
-  max-width: 30rem;
-  text-align: center;
-  padding: 2.5rem 2rem;
-  box-shadow: var(--shadow-card);
+  width: min(100%, 520px);
+  text-align: left;
 }
-
 .auth-mark {
-  font-size: 2.2rem;
-  color: var(--accent);
-  margin-inline: auto;
-  margin-bottom: 1rem;
+  width: 38px;
+  height: 38px;
+  margin-bottom: 32px;
 }
-
 .auth-card h1 {
-  font-size: 1.7rem;
+  font-size: clamp(34px, 4vw, 44px);
+  margin-bottom: 24px;
 }
-
 .auth-card .lede {
-  font-size: 1rem;
-  margin-inline: auto;
+  font-size: 17px;
 }
-
 .auth-list {
   list-style: none;
-  margin: 1.4rem 0 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.6rem;
-  text-align: left;
-  font-size: 0.95rem;
+  padding: 28px 0;
+  margin: 36px 0;
+  border-block: 1px solid var(--line);
+  display: grid;
+  gap: 18px;
+  font-size: 15px;
 }
-
 .auth-list li {
   display: flex;
-  gap: 0.5rem;
+  gap: 12px;
   align-items: flex-start;
 }
-
 .auth-check {
-  color: var(--accent);
   flex-shrink: 0;
-  margin-top: 0.2rem;
+  margin-top: 4px;
 }
-
-.auth-cta {
-  margin-top: 1.4rem;
-}
-
 .auth-legal {
-  margin: 1rem 0 0;
+  font-size: 12px;
   color: var(--muted);
-  font-size: 0.82rem;
-  line-height: 1.5;
+  line-height: 1.7;
+  margin: 24px 0 0;
 }
-
+.auth-legal a,
+.auth-alt a {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
 .auth-alt {
-  margin: 1.25rem 0 0;
+  font-size: 14px;
   color: var(--muted);
-  font-size: 0.92rem;
+  margin: 32px 0 0;
+}
+@media (max-width: 600px) {
+  .auth-section {
+    padding-block: 40px 64px;
+  }
 }
 </style>

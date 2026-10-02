@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { ArrowRight } from '@lucide/vue'
+const { copy } = useMarketingI18n()
+
+import { ArrowUpRight } from '@lucide/vue'
 import { availableIntegrations, plannedIntegrations } from '~/data/integrations'
 
 useSiteMeta({
   title: 'Integrations',
   description:
-    'Route Fidibeki feedback and issue events into Slack, Microsoft Teams, and your own systems with signed webhooks. Available today on Scale and Enterprise plans.',
+    'Connect Fidibeki with Slack, Microsoft Teams, Jira, Linear, and your own systems. Compare integration capabilities and plan availability.',
   path: '/integrations',
   breadcrumbs: [
     { name: 'Home', path: '/' },
@@ -17,133 +19,102 @@ useSiteMeta({
 <template>
   <div>
     <PageHero
-      eyebrow="Integrations"
-      title="Your feedback, in your tools"
-      lede="Destinations subscribe to exactly the events they need: feedback created, issues created, updated, or resolved. They retry and log every message."
+      :eyebrow="copy('Integrations')"
+      :title="copy('Your feedback, in your tools')"
+      :lede="
+        copy(
+          'Send updates to your team, link feedback to the work, or connect your own systems.',
+        )
+      "
     >
-      <template #breadcrumbs>
-        <Breadcrumbs :items="[{ name: 'Home', path: '/' }, { name: 'Integrations', path: '/integrations' }]" />
-      </template>
+      <template #breadcrumbs
+        ><Breadcrumbs
+          :items="[
+            { name: 'Home', path: '/' },
+            { name: 'Integrations', path: '/integrations' },
+          ]"
+      /></template>
     </PageHero>
-
-    <section class="section">
+    <div class="container integration-example">
+      <HomeIntegrations compact />
+    </div>
+    <section
+      class="section catalog-section"
+      aria-labelledby="available-heading"
+    >
       <div class="container">
-        <div class="section-head">
-          <h2>Available today</h2>
-          <p class="lede">On Scale and Enterprise plans.</p>
-        </div>
-        <div class="integration-grid">
-          <NuxtLink
-            v-for="(integration, index) in availableIntegrations"
-            :key="integration.slug"
-            v-reveal="index * 60"
-            :to="`/integrations/${integration.slug}`"
-            class="card integration-card"
-          >
-            <span class="integration-icon"><FeatureIcon :name="integration.icon" :size="24" /></span>
-            <h3>{{ integration.name }}</h3>
-            <p>{{ integration.summary }}</p>
-            <span class="integration-more">Details <ArrowRight :size="14" aria-hidden="true" /></span>
-          </NuxtLink>
-        </div>
+        <h2 id="available-heading" class="catalog-heading">
+          {{ copy('Available integrations') }}
+        </h2>
+        <NuxtLinkLocale
+          v-for="integration in availableIntegrations"
+          :key="integration.slug"
+          :to="`/integrations/${integration.slug}`"
+          class="catalog-row"
+        >
+          <div>
+            <h3>{{ copy(integration.name) }}</h3>
+            <span class="catalog-meta">{{
+              copy(integration.availability)
+            }}</span>
+          </div>
+          <p>{{ copy(integration.summary) }}</p>
+          <ArrowUpRight :size="22" aria-hidden="true" />
+        </NuxtLinkLocale>
       </div>
     </section>
-
-    <section class="section planned-section">
+    <section
+      v-if="plannedIntegrations.length"
+      class="section planned-section"
+      aria-labelledby="planned-heading"
+    >
       <div class="container">
-        <div class="section-head">
-          <h2>Planned</h2>
-          <p class="lede">On the roadmap, not shipped yet. We say so honestly.</p>
-        </div>
-        <div class="integration-grid">
-          <NuxtLink
-            v-for="integration in plannedIntegrations"
-            :key="integration.slug"
-            :to="`/integrations/${integration.slug}`"
-            class="card integration-card planned"
-          >
-            <span class="integration-icon"><FeatureIcon :name="integration.icon" :size="24" /></span>
-            <h3>{{ integration.name }} <span class="badge badge-neutral">Planned</span></h3>
-            <p>{{ integration.summary }}</p>
-          </NuxtLink>
-        </div>
+        <h2 id="planned-heading" class="catalog-heading">
+          {{ copy('On the roadmap') }}
+        </h2>
+        <NuxtLinkLocale
+          v-for="integration in plannedIntegrations"
+          :key="integration.slug"
+          :to="`/integrations/${integration.slug}`"
+          class="catalog-row"
+        >
+          <div>
+            <h3>{{ copy(integration.name) }}</h3>
+            <span class="catalog-meta">{{
+              copy('Planned · Not available yet')
+            }}</span>
+          </div>
+          <p>{{ copy(integration.summary) }}</p>
+          <ArrowUpRight :size="22" aria-hidden="true" />
+        </NuxtLinkLocale>
       </div>
     </section>
-
     <CtaSection
-      title="Need an integration we haven’t built?"
-      body="Webhooks give you a signed event stream today. Telling us what you need shapes what we build next."
+      :title="copy('Need another connection?')"
+      :body="
+        copy(
+          'Use signed webhooks to connect your own systems, or tell us which integration your team needs.',
+        )
+      "
     />
   </div>
 </template>
-
 <style scoped>
-.integration-grid {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 1rem;
+.integration-example {
+  padding-block: 24px 64px;
 }
-
-.integration-card {
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-  color: var(--ink);
-  transition: border-color 160ms ease, transform 160ms ease;
-}
-
-.integration-card:hover {
-  text-decoration: none;
-  border-color: var(--accent);
-  transform: translateY(-3px);
-}
-
-.integration-card p {
-  margin: 0;
+.catalog-heading {
+  font-size: 15px;
+  font-weight: 400;
   color: var(--muted);
-  font-size: 0.94rem;
+  margin-bottom: 28px;
 }
-
-.integration-card h3 {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  margin: 0;
-}
-
-.integration-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 46px;
-  height: 46px;
-  margin-bottom: 0.4rem;
-  border-radius: 10px;
-  background: var(--accent-soft);
-  color: var(--accent-text);
-}
-
-.integration-more {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.3rem;
-  margin-top: 0.5rem;
-  color: var(--accent-text);
-  font-size: 0.88rem;
-  font-weight: 600;
-}
-
 .planned-section {
   padding-top: 0;
 }
-
-.integration-card.planned {
-  border-style: dashed;
-}
-
-@media (min-width: 800px) {
-  .integration-grid {
-    grid-template-columns: repeat(3, 1fr);
+@media (max-width: 600px) {
+  .integration-example {
+    padding-block: 0 40px;
   }
 }
 </style>

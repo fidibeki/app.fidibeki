@@ -7,6 +7,7 @@ const pageSize = 50
 const tokenHeader = "X-Fidibeki-Chat-Token"
 
 type Conversation struct {
+	Locale               string    `json:"locale,omitempty"`
 	ID                   string    `json:"id"`
 	ProjectID            string    `json:"project_id"`
 	Name                 string    `json:"name"`

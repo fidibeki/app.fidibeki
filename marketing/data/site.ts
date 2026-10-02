@@ -1,21 +1,46 @@
+import { guideSlugs } from './guides'
 import { featureSlugs } from './features'
 import { integrationSlugs } from './integrations'
 import { useCaseSlugs } from './use-cases'
 import { docSlugs } from './docs'
+import { comparisonRoutes } from './comparisons'
 
 export const siteName = 'Fidibeki'
 
 export const siteTagline = 'Product feedback that finishes the job.'
 
 export const siteDescription =
-  'The fastest path from “I found a bug” to “we fixed it.” Fidibeki lets reporters add screenshots, audio, or session replay from inside your product, so your team can triage, track, and update them in one workflow.'
+  'Collect website feedback, chat with visitors, and track the issues behind their messages. Fidibeki helps small SaaS teams follow through with a personal reply.'
 
 export const loopStages = [
-  { key: 'capture', label: 'Collect', blurb: 'Reporters submit feedback and add context on their terms.' },
-  { key: 'analyze', label: 'Understand', blurb: 'On eligible plans, AI can clean, transcribe, and score reports before your team reads them.' },
-  { key: 'decide', label: 'Decide', blurb: 'Triage the inbox, link related reports to one issue, and merge duplicates.' },
-  { key: 'track', label: 'Track', blurb: 'Follow statuses, priorities, and an immutable history until resolution.' },
-  { key: 'communicate', label: 'Close the loop', blurb: 'Send updates to the reporters who opted in.' },
+  {
+    key: 'capture',
+    label: 'Collect',
+    blurb: 'Reporters submit feedback and add context on their terms.',
+  },
+  {
+    key: 'analyze',
+    label: 'Understand',
+    blurb:
+      'On eligible plans, AI can clean, transcribe, and score reports before your team reads them.',
+  },
+  {
+    key: 'decide',
+    label: 'Decide',
+    blurb:
+      'Triage the inbox, link related reports to one issue, and merge duplicates.',
+  },
+  {
+    key: 'track',
+    label: 'Track',
+    blurb:
+      'Follow statuses, priorities, and an immutable history until resolution.',
+  },
+  {
+    key: 'communicate',
+    label: 'Close the loop',
+    blurb: 'Send updates to the reporters who opted in.',
+  },
 ] as const
 
 /** Real customers only — never add a logo without the founder's confirmation. */
@@ -80,11 +105,13 @@ export const footerGroups = [
       { label: 'Integrations', to: '/integrations' },
       { label: 'Pricing', to: '/pricing' },
       { label: 'Use cases', to: '/use-cases' },
+      { label: 'Compare', to: '/compare' },
     ],
   },
   {
     heading: 'Resources',
     links: [
+      { label: 'Guides', to: '/guides' },
       { label: 'Documentation', to: '/docs' },
       { label: 'Install the widget', to: '/docs/installation' },
       { label: 'Widget rules', to: '/docs/widget-rules' },
@@ -114,11 +141,15 @@ export const footerGroups = [
  */
 export const marketingRoutes: string[] = [
   '/',
+  '/compare',
+  ...comparisonRoutes,
   '/features',
   ...featureSlugs.map((slug) => `/features/${slug}`),
   '/integrations',
   ...integrationSlugs.map((slug) => `/integrations/${slug}`),
   '/pricing',
+  '/guides',
+  ...guideSlugs.map(slug => `/guides/${slug}`),
   '/docs',
   ...docSlugs.map((slug) => `/docs/${slug}`),
   '/use-cases',

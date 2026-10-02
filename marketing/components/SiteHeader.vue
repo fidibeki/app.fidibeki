@@ -1,334 +1,282 @@
 <script setup lang="ts">
-import { Menu, X } from '@lucide/vue'
+const { copy } = useMarketingI18n()
+
+import { ArrowUpRight, Menu, X } from '@lucide/vue'
 import { primaryNav } from '~/data/site'
+import { unlocalizedPath } from '~/utils/locale'
 
 const links = useAppLinks()
-const route = useRoute()
 const menuOpen = ref(false)
-const scrolled = ref(false)
-
-// Hysteresis keeps the pill from flip-flopping (and restarting its
-// transition) when the scroll position hovers around a single threshold.
-const ENTER_AT = 48
-const EXIT_AT = 8
-let ticking = false
-
-function updateScrolled() {
-  ticking = false
-  const y = window.scrollY
-  if (!scrolled.value && y > ENTER_AT) {
-    scrolled.value = true
-  } else if (scrolled.value && y < EXIT_AT) {
-    scrolled.value = false
-  }
-}
-
-function onScroll() {
-  if (!ticking) {
-    ticking = true
-    requestAnimationFrame(updateScrolled)
-  }
-}
-
-onMounted(() => {
-  updateScrolled()
-  window.addEventListener('scroll', onScroll, { passive: true })
-})
-
-onBeforeUnmount(() => {
-  window.removeEventListener('scroll', onScroll)
-})
-
-watch(
-  () => route.path,
-  () => {
-    menuOpen.value = false
-  },
+const menuButton = ref<HTMLButtonElement | null>(null)
+const router = useRouter()
+// Global navigation follows the committed URL, without waiting for NuxtPage to finish rendering.
+const sectionPath = computed(() =>
+  unlocalizedPath(router.currentRoute.value.path),
 )
 
-watch(menuOpen, (open) => {
-  if (import.meta.client) {
-    document.documentElement.style.overflow = open ? 'hidden' : ''
-  }
-})
-
-function isActive(to: string) {
-  return route.path === to || route.path.startsWith(`${to}/`)
+function closeMenu(returnFocus = false) {
+  menuOpen.value = false
+  if (returnFocus) menuButton.value?.focus()
 }
+
+watch(
+  () => router.currentRoute.value.fullPath,
+  () => closeMenu(),
+)
 </script>
 
 <template>
-  <header class="site-header" :class="{ scrolled: scrolled || menuOpen }">
-    <div class="header-shell">
-      <div class="header-inner">
-        <NuxtLink to="/" class="header-brand" aria-label="Fidibeki home">
-          <BrandLogo :height="24" />
-        </NuxtLink>
-
-        <nav class="header-nav" aria-label="Primary">
-          <NuxtLink
-            v-for="item in primaryNav"
-            :key="item.to"
-            :to="item.to"
-            class="header-link"
-            :class="{ active: isActive(item.to) }"
-            :aria-current="isActive(item.to) ? 'page' : undefined"
-          >
-            {{ item.label }}
-          </NuxtLink>
-        </nav>
-
-        <div class="header-actions">
-          <ThemeToggle />
-          <a :href="links.signIn" class="header-link header-signin">Sign in</a>
-          <a :href="links.signUp" class="btn btn-primary header-cta">Start free trial</a>
-          <button
-            type="button"
-            class="menu-button"
-            :aria-expanded="menuOpen"
-            aria-controls="mobile-menu"
-            :aria-label="menuOpen ? 'Close menu' : 'Open menu'"
-            @click="menuOpen = !menuOpen"
-          >
-            <X v-if="menuOpen" :size="22" aria-hidden="true" />
-            <Menu v-else :size="22" aria-hidden="true" />
-          </button>
-        </div>
-      </div>
-    </div>
-
-    <div v-if="menuOpen" id="mobile-menu" class="mobile-menu">
-      <nav class="mobile-nav" aria-label="Mobile">
-        <NuxtLink
-          v-for="(item, index) in primaryNav"
+  <header class="home-header" @keydown.esc="closeMenu(true)">
+    <div class="home-width home-header-inner">
+      <NuxtLinkLocale
+        to="/"
+        class="home-brand"
+        :aria-label="copy('Fidibeki home')"
+      >
+        <BrandMark /> <span>{{ copy('fidibeki') }}</span>
+      </NuxtLinkLocale>
+      <nav class="home-nav" :aria-label="copy('Primary')">
+        <NuxtLinkLocale
+          v-for="item in primaryNav"
           :key="item.to"
           :to="item.to"
-          class="mobile-link"
-          :style="{ animationDelay: `${80 + index * 60}ms` }"
-          :aria-current="isActive(item.to) ? 'page' : undefined"
+          :class="{
+            'section-active':
+              sectionPath === item.to || sectionPath.startsWith(`${item.to}/`),
+          }"
+          :aria-current="
+            sectionPath === item.to
+              ? 'page'
+              : sectionPath.startsWith(`${item.to}/`)
+                ? 'location'
+                : undefined
+          "
+          >{{ copy(item.label) }}</NuxtLinkLocale
         >
-          {{ item.label }}
-        </NuxtLink>
-        <div class="mobile-cta-group" :style="{ animationDelay: `${80 + primaryNav.length * 60}ms` }">
-          <a :href="links.signUp" class="btn btn-primary btn-large">Start free trial</a>
-          <a :href="links.signIn" class="btn btn-ghost btn-large">Sign in</a>
-          <a :href="links.demo" class="btn btn-ghost btn-large" rel="noopener" target="_blank">Book a demo</a>
-        </div>
       </nav>
+      <div class="home-header-actions">
+        <LanguageSwitcher class="header-language" />
+        <a :href="links.signIn" class="home-signin">{{ copy('Log in') }}</a>
+        <a :href="links.signUp" class="home-button home-header-cta"
+          >{{ copy('Start free trial') }}
+          <ArrowUpRight :size="15" aria-hidden="true"
+        /></a>
+        <button
+          ref="menuButton"
+          class="home-menu-toggle"
+          type="button"
+          :aria-label="copy(menuOpen ? 'Close menu' : 'Open menu')"
+          :aria-expanded="menuOpen"
+          aria-controls="home-mobile-nav"
+          @click="menuOpen = !menuOpen"
+        >
+          <X v-if="menuOpen" :size="22" aria-hidden="true" />
+          <Menu v-else :size="22" aria-hidden="true" />
+        </button>
+      </div>
     </div>
+    <nav
+      v-if="menuOpen"
+      id="home-mobile-nav"
+      class="home-mobile-nav"
+      :aria-label="copy('Mobile')"
+    >
+      <div class="home-width home-mobile-links">
+        <LanguageSwitcher />
+        <NuxtLinkLocale
+          v-for="item in primaryNav"
+          :key="item.to"
+          :to="item.to"
+          :class="{
+            'section-active':
+              sectionPath === item.to || sectionPath.startsWith(`${item.to}/`),
+          }"
+          :aria-current="
+            sectionPath === item.to
+              ? 'page'
+              : sectionPath.startsWith(`${item.to}/`)
+                ? 'location'
+                : undefined
+          "
+          >{{ copy(item.label) }}</NuxtLinkLocale
+        >
+        <a :href="links.signIn">{{ copy('Log in') }}</a>
+        <a :href="links.signUp"
+          >{{ copy('Start free trial') }}
+          <ArrowUpRight :size="17" aria-hidden="true"
+        /></a>
+        <a :href="links.demo" target="_blank" rel="noopener"
+          >{{ copy('Book a demo') }}
+          <ArrowUpRight :size="17" aria-hidden="true"
+        /></a>
+      </div>
+    </nav>
   </header>
 </template>
 
 <style scoped>
-.site-header {
-  position: fixed;
+.home-header {
+  position: sticky;
   top: 0;
-  left: 0;
-  right: 0;
-  z-index: 50;
+  z-index: 60;
+  background: var(--home-canvas);
+  color: var(--home-ink);
 }
-
-/* Full-bleed and transparent at the top of the page; a floating, blurred
-   pill once the visitor scrolls. Only the shell width animates in layout —
-   the vertical float uses transform and everything else is paint-only, so
-   the transition stays smooth. */
-.header-shell {
-  --header-ease: cubic-bezier(0.33, 1, 0.68, 1);
-  position: relative;
-  margin-inline: auto;
-  max-width: 100%;
-  border: 1px solid transparent;
-  border-radius: 16px;
-  background: transparent;
-  transform: translateY(0);
-  will-change: transform;
-  transition:
-    max-width 380ms var(--header-ease),
-    transform 380ms var(--header-ease),
-    border-color 380ms var(--header-ease),
-    box-shadow 380ms var(--header-ease);
-}
-
-/* The frosted fill sits on its own layer purely so the blur radius can stay
-   fixed at 16px and fade in with opacity. Animating backdrop-filter from
-   blur(0px) to blur(16px) made the compositor re-blur the backdrop at a new
-   radius every frame, which is what made the collapse stutter; a constant
-   radius is blurred once and then cross-faded. Keeping blur(0px) on the base
-   state was costly too — it is not the same as no filter, so the browser held
-   a backdrop root alive even parked at the top of the page. */
-.header-shell::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  border-radius: inherit;
-  background: color-mix(in srgb, var(--canvas) 88%, transparent);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  opacity: 0;
-  transition: opacity 380ms var(--header-ease);
-}
-
-.site-header.scrolled .header-shell {
-  max-width: min(93%, calc(100% - 2rem));
-  transform: translateY(0.75rem);
-  border-color: var(--line);
-  box-shadow: var(--shadow-card);
-}
-
-.site-header.scrolled .header-shell::before {
-  opacity: 1;
-}
-
-.header-inner {
-  position: relative;
+.home-header-inner {
   display: flex;
   align-items: center;
-  gap: 1.5rem;
-  height: var(--header-height);
-  padding-inline: var(--gutter);
+  gap: 28px;
+  min-height: 80px;
+  padding-block: 16px;
 }
-
-.header-brand {
-  display: inline-flex;
-  align-items: center;
-  flex-shrink: 0;
-}
-
-.header-nav {
-  display: none;
-  align-items: center;
-  gap: 1.35rem;
-  margin-inline: auto;
-}
-
-.header-link {
-  color: var(--ink-soft);
-  font-size: 0.94rem;
-  font-weight: 500;
-}
-
-.header-link:hover {
-  color: var(--accent-text);
+.home-brand:hover {
   text-decoration: none;
 }
-
-.header-link.active {
-  color: var(--accent-text);
-  font-weight: 640;
+.home-nav .section-active,
+.home-mobile-links .section-active {
+  text-decoration: underline;
+  text-underline-offset: 6px;
 }
-
-.header-actions {
+.home-brand {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+  font-size: 24px;
+  font-weight: 650;
+  letter-spacing: -0.04em;
+}
+.home-brand :deep(svg) {
+  width: 30px;
+  height: 30px;
+}
+.home-nav {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
+  gap: 20px;
+  font-size: 14px;
+}
+.home-nav a,
+.home-signin {
+  text-decoration: none;
+}
+.home-nav a:hover,
+.home-signin:hover {
+  color: var(--home-muted);
+}
+.home-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
   margin-left: auto;
+  font-size: 14px;
 }
-
-.header-signin,
-.header-cta {
+.home-menu-toggle {
   display: none;
-}
-
-.menu-button {
-  display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 38px;
-  height: 38px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  color: inherit;
   background: transparent;
-  color: var(--ink);
   cursor: pointer;
 }
-
-.mobile-menu {
-  position: fixed;
-  inset: 0;
-  z-index: -1;
+.home-mobile-nav {
+  position: absolute;
+  inset: 100% 0 auto;
+  padding-block: 12px 24px;
+  background: var(--home-canvas);
+  border-bottom: 1px solid var(--home-line);
+  max-height: calc(100dvh - 80px);
   overflow-y: auto;
-  background: var(--canvas);
-  padding-top: calc(var(--header-height) + 2rem);
-  padding-bottom: 2rem;
 }
-
-.mobile-nav {
+.home-mobile-links {
+  display: grid;
+}
+.home-mobile-nav a {
   display: flex;
-  flex-direction: column;
-  padding-inline: var(--gutter);
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 0;
+  font-size: 18px;
 }
-
-.mobile-link {
-  padding: 0.9rem 0;
-  border-bottom: 1px solid var(--line);
-  color: var(--ink);
-  font-size: 1.6rem;
-  font-weight: 640;
-  font-family: var(--font-display);
-  opacity: 0;
-  transform: translateY(14px);
-  animation: menu-reveal 480ms cubic-bezier(0.2, 0.65, 0.25, 1) forwards;
-}
-
-.mobile-link:hover {
-  text-decoration: none;
-  color: var(--accent-text);
-}
-
-.mobile-cta-group {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-  margin-top: 1.75rem;
-  opacity: 0;
-  transform: translateY(14px);
-  animation: menu-reveal 480ms cubic-bezier(0.2, 0.65, 0.25, 1) forwards;
-}
-
-@keyframes menu-reveal {
-  to {
-    opacity: 1;
-    transform: none;
+@media (max-width: 1100px) {
+  .home-header-inner {
+    gap: 28px;
+  }
+  .home-nav {
+    gap: 18px;
+  }
+  .home-header-actions {
+    gap: 18px;
   }
 }
-
-@media (prefers-reduced-motion: reduce) {
-  .mobile-link,
-  .mobile-cta-group {
-    opacity: 1;
-    transform: none;
-    animation: none;
+@media (max-width: 1100px) {
+  .home-nav,
+  .home-signin {
+    display: none;
   }
-}
-
-@media (min-width: 900px) {
-  .header-nav {
+  .home-menu-toggle {
     display: flex;
   }
-
-  .header-signin,
-  .header-cta {
-    display: inline-flex;
+  .home-header-inner {
+    min-height: 72px;
+    padding-block: 12px;
   }
-
-  .header-cta {
-    padding: 0.5rem 1rem;
-    font-size: 0.9rem;
+  .home-mobile-nav {
+    max-height: calc(100dvh - 72px);
   }
-
-  .menu-button,
-  .mobile-menu {
+  .home-header-actions {
+    gap: 10px;
+  }
+  .home-header .home-header-cta {
+    min-height: 40px;
+    padding: 9px 14px;
+    font-size: 12px;
+  }
+  .home-brand:hover {
+    text-decoration: none;
+  }
+  .home-nav .section-active,
+  .home-mobile-links .section-active {
+    text-decoration: underline;
+    text-underline-offset: 6px;
+  }
+  .home-brand {
+    font-size: 24px;
+  }
+  .home-brand :deep(svg) {
+    width: 27px;
+    height: 27px;
+  }
+}
+@media (min-width: 1101px) {
+  .home-mobile-nav {
     display: none;
   }
 }
+@media (max-width: 380px) {
+  .home-header-inner {
+    gap: 10px;
+  }
+  .home-header-actions {
+    gap: 4px;
+  }
+  .home-header .home-header-cta {
+    padding-inline: 10px;
+  }
+  .home-header-cta :deep(svg) {
+    display: none;
+  }
+}
+</style>
 
-/* Optical centering: the nav's own auto margins split the free space so the
-   gap to the logo equals the gap to the actions. The actions must not carry
-   margin-left auto here or the two auto margins would fight and skew the nav. */
-@media (min-width: 900px) {
-  .header-actions {
-    margin-left: 0;
+<style scoped>
+@media (max-width: 1100px) {
+  .header-language {
+    display: none;
   }
 }
 </style>
