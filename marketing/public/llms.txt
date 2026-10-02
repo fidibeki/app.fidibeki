@@ -8,6 +8,8 @@ The linked Markdown pages are generated from the same published content as the w
 
 ## Product
 
+- [Website conversations](https://fidibeki.com/features/website-conversations.md): Talk with active visitors, link messages to issues, and return to chat for a manual reply. Internal issue notes are not sent to visitors.
+
 - [Product overview](https://fidibeki.com/index.md): Website feedback, visitor conversations, and the path from a report to an update.
 - [Features](https://fidibeki.com/features.md): Capture, analysis, issue tracking, and reporter updates, with plan availability.
 - [Pricing](https://fidibeki.com/pricing.md): Starter, Growth, Scale, and Enterprise prices, limits, retention, and the free trial.

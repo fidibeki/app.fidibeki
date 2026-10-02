@@ -47,6 +47,7 @@ export const competitors: CompetitorEntry[] = [
     focus: 'Visual bug reporting and website QA',
     sources: [
       { label: 'Product overview', url: 'https://marker.io/' },
+{ label: 'Reporter comments', url: 'https://marker.io/blog/guest-commenting-clients' },
       { label: 'Pricing', url: 'https://marker.io/pricing' },
       {
         label: 'Session replay',
@@ -78,6 +79,14 @@ export const competitors: CompetitorEntry[] = [
       scenario:
         'Report a checkout problem from a phone. Check the screenshot, the steps needed to reproduce it, the destination issue and the message the reporter receives. Then repeat with a feature suggestion. That second report helps reveal whether you need a QA tool or broader product feedback intake.',
       rows: [
+{
+          "topic": "Conversation and follow-up",
+          "fidibeki": "Start a website conversation, link a visitor message to an issue, and return to that chat to reply.",
+          "competitor": "Reporters can comment on issues and receive updates; internal notes stay within the team.",
+          "source": "https://marker.io/blog/guest-commenting-clients",
+          "productPath": "/features/website-conversations",
+          "detail": "Test this with one visitor message and one real task. Check how your team starts the exchange, preserves the context and sends the final reply. A shared feature name does not tell you how the workflow feels."
+},
         {
           topic: 'Reporting on the page',
           fidibeki:
@@ -125,7 +134,7 @@ export const competitors: CompetitorEntry[] = [
     ],
     pricingNote:
       'These Marker.io prices are monthly equivalents with annual billing. User allowances and feedback limits differ from Fidibeki; compare the plan your team would actually use.',
-    featureSlugs: ['feedback-widget', 'session-replay'],
+    featureSlugs: ['website-conversations','feedback-widget', 'session-replay'],
   },
   {
     slug: 'userback',
@@ -134,6 +143,7 @@ export const competitors: CompetitorEntry[] = [
     focus: 'Visual feedback, surveys and a feature portal',
     sources: [
       { label: 'Product overview', url: 'https://userback.io/' },
+{ label: 'User surveys', url: 'https://userback.io/feature/user-survey/' },
       { label: 'Pricing', url: 'https://userback.io/pricing/' },
       {
         label: 'Feature portal',
@@ -173,6 +183,14 @@ export const competitors: CompetitorEntry[] = [
       scenario:
         'Ask a user to report a broken form, then submit a product idea. Follow both through triage and an update. If the idea needs public votes, test that separately. If the report needs a private conversation on your site, make that part of your evaluation too.',
       rows: [
+{
+          "topic": "Conversation and follow-up",
+          "fidibeki": "Start a website conversation, link a visitor message to an issue, and return to that chat to reply.",
+          "competitor": "Targeted in-app surveys and session replay provide context for follow-up.",
+          "source": "https://userback.io/feature/user-survey/",
+          "productPath": "/features/website-conversations",
+          "detail": "Test this with one visitor message and one real task. Check how your team starts the exchange, preserves the context and sends the final reply. A shared feature name does not tell you how the workflow feels."
+},
         {
           topic: 'Visual feedback',
           fidibeki:
@@ -221,7 +239,7 @@ export const competitors: CompetitorEntry[] = [
     ],
     pricingNote:
       'Userback also sells a Feature Portal add-on. Confirm its cost if public voting is part of your requirements. The Free plan exists, so Fidibeki is not automatically the cheaper option.',
-    featureSlugs: ['feedback-widget', 'issue-tracking'],
+    featureSlugs: ['website-conversations','feedback-widget', 'issue-tracking'],
   },
   {
     slug: 'bugherd',
@@ -258,6 +276,14 @@ export const competitors: CompetitorEntry[] = [
       scenario:
         'Use two examples: a client requesting a design revision before launch, and a visitor reporting a broken button after launch. Test how each person submits context, who sees it and how they learn the work is finished. Include a PDF if files are part of your review process.',
       rows: [
+{
+          "topic": "Conversation and follow-up",
+          "fidibeki": "Start a website conversation, link a visitor message to an issue, and return to that chat to reply.",
+          "competitor": "Clients and reviewers discuss feedback tasks with the team.",
+          "source": "https://bugherd.com/features",
+          "productPath": "/features/website-conversations",
+          "detail": "Test this with one visitor message and one real task. Check how your team starts the exchange, preserves the context and sends the final reply. A shared feature name does not tell you how the workflow feels."
+},
         {
           topic: 'What people review',
           fidibeki: 'A running website or app through its embedded widget.',
@@ -299,24 +325,24 @@ export const competitors: CompetitorEntry[] = [
     ],
     pricingNote:
       'BugHerd prices additional members separately and also offers annual billing. Its unlimited-project allowance is different from Fidibeki’s project limits; count your active client sites before choosing.',
-    featureSlugs: ['feedback-widget', 'reporter-loop'],
+    featureSlugs: ['website-conversations','feedback-widget', 'reporter-loop'],
   },
   {
     slug: 'canny',
     name: 'Canny',
     reviewedAt,
-    focus: 'Feature voting, prioritisation and public roadmaps',
+    focus: 'Feature voting, prioritisation and roadmaps',
     sources: [
       { label: 'Product overview', url: 'https://canny.io/' },
       { label: 'Pricing', url: 'https://canny.io/pricing' },
       { label: 'Features', url: 'https://canny.io/features' },
     ],
     alternative: {
-      title: 'A Canny alternative for private product feedback',
+      title: 'A Canny alternative for direct website conversations',
       description:
-        'Looking for a Canny alternative? Consider Fidibeki for private feedback, bug reports and conversations. Understand what changes if you rely on public voting.',
+        'Looking for a Canny alternative? Compare direct website conversations and issue tracking with feedback boards, voting and roadmaps.',
       introduction:
-        'Consider Fidibeki when your next problem is understanding an individual report and answering its author. A public request board is a different job, and moving away from one changes how your users participate.',
+        'Canny supports private feedback as well as public boards. Consider Fidibeki when your day starts with talking to someone using your website, understanding their problem and turning that conversation into work your team can track.',
       fit: 'Fidibeki fits teams collecting contextual reports directly in their product. Link repeated requests to an issue, choose a priority and keep an internal history. Reporters who opt in can receive progress updates without creating an account or joining a public board.',
       keep: 'Keep Canny on your shortlist when users expect to vote on requests and follow a public roadmap. Fidibeki does not provide a public voting board, a public roadmap or a changelog publisher.',
       steps: [
@@ -330,12 +356,20 @@ export const competitors: CompetitorEntry[] = [
     },
     versus: {
       description:
-        'Fidibeki vs Canny: compare private feedback intake with public voting and roadmaps, understand plan limits, and choose the workflow your product needs.',
+        'Fidibeki vs Canny: compare website conversations and issue follow-up with feedback boards, voting, roadmaps and status updates.',
       verdict:
-        'Fidibeki focuses on individual feedback, conversations and issue follow-up. Canny is a better fit for a public feature-request programme. Both can keep users informed, but a private update to one reporter is not the same as a public roadmap or release announcement.',
+        'Choose Fidibeki for direct website conversations that lead to tracked issues and personal replies. Choose Canny when voting, prioritisation, public or private roadmaps and release announcements are central. Both support follow-up; privacy alone is not a reason to switch.',
       scenario:
         'Evaluate a recurring feature request and a private bug report separately. For the request, decide whether you need public voting and a published commitment. For the bug, check how to capture context and answer one person. You may need both workflows rather than one replacement.',
       rows: [
+{
+          "topic": "Conversation and follow-up",
+          "fidibeki": "Start a website conversation, link a visitor message to an issue, and return to that chat to reply.",
+          "competitor": "Public or private boards and roadmaps, comments and status-update emails.",
+          "source": "https://canny.io/features",
+          "productPath": "/features/website-conversations",
+          "detail": "Test this with one visitor message and one real task. Check how your team starts the exchange, preserves the context and sends the final reply. A shared feature name does not tell you how the workflow feels."
+},
         {
           topic: 'Collecting feedback',
           fidibeki:
@@ -384,7 +418,7 @@ export const competitors: CompetitorEntry[] = [
     ],
     pricingNote:
       'Canny counts users associated with feedback. Pro starts at the listed annual-billing price and scales with tracked users. Fidibeki limits projects, monthly feedback and team members instead. Model your own usage rather than comparing the two starting prices alone.',
-    featureSlugs: ['issue-tracking', 'reporter-loop'],
+    featureSlugs: ['website-conversations','issue-tracking', 'reporter-loop'],
   },
 ]
 export function alternativePath(slug: string) {

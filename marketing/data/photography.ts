@@ -67,6 +67,7 @@ export const useCasePhotography: Record<string, EditorialImage> = {
 }
 
 export const featurePhotography: Partial<Record<string, EditorialImage>> = {
+  'website-conversations': photography.conversation,
   'feedback-widget': photography.laptop,
   'issue-tracking': photography.collaboration,
   'reporter-loop': photography.conversation,

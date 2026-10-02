@@ -60,7 +60,7 @@ const steps = computed(() => [
       : 'Your feedback reaches the team.',
     detail: isQuestion.value
       ? 'A conversation starts right inside the product.'
-      : 'It arrives in Fidibeki, ready for someone to pick up.',
+      : 'In this example, the visitor sends a message through the website chat.',
     icon: Inbox,
   },
   {
@@ -69,7 +69,7 @@ const steps = computed(() => [
       : 'Your team takes it from here.',
     detail: isQuestion.value
       ? 'Your team reads the question and writes a reply.'
-      : 'They connect the report to an issue and track the work.',
+      : 'They create an issue from the message. The conversation stays linked.',
     icon: isQuestion.value ? MessageCircle : ListTodo,
   },
   {
@@ -78,7 +78,7 @@ const steps = computed(() => [
       : 'You hear what changed.',
     detail: isQuestion.value
       ? 'The reply appears in the same website conversation.'
-      : 'If you opted in, the team can send you an update.',
+      : 'The team returns to the same conversation and sends a reply.',
     icon: Reply,
   },
 ])

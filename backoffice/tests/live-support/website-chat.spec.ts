@@ -17,7 +17,7 @@ test('tenant talks to its own website visitor and feedback stays available', asy
   const cookie = randomBytes(32).toString('base64url'), hash = createHash('sha256').update(cookie).digest('hex')
   const key = `pk_live_${randomBytes(11).toString('hex')}`
   sql(`INSERT INTO tenants(id,name,slug,plan,status) VALUES('${tenant}','Field Store','website-chat-e2e','growth','active');
-    INSERT INTO tenant_members(id,tenant_id,email,name,status,permissions) VALUES('${member}','${tenant}','owner@shop.example','Alex at Field Store','active',ARRAY['chat:read','chat:write','chat:delete','project:read','project:update','feedback:read','issue:read','tenant:read']);
+    INSERT INTO tenant_members(id,tenant_id,email,name,status,permissions) VALUES('${member}','${tenant}','owner@shop.example','Alex at Field Store','active',ARRAY['chat:read','chat:write','chat:delete','project:read','project:update','feedback:read','issue:read','issue:update','tenant:read']);
     UPDATE tenants SET owner_member_id='${member}' WHERE id='${tenant}';
     INSERT INTO tenant_member_sessions(tenant_id,member_id,refresh_hash) VALUES('${tenant}','${member}','${hash}');
     INSERT INTO projects(id,tenant_id,name,public_key,allowed_domains) VALUES('${project}','${tenant}','Field Store website','${key}',ARRAY['shop.localhost']);
@@ -65,6 +65,28 @@ test('tenant talks to its own website visitor and feedback stays available', asy
     await widget.getByRole('button', { name: 'Download conversation', exact: true }).click()
     const download = await downloadPromise
     expect(JSON.parse(readFileSync((await download.path())!, 'utf8')).messages).toHaveLength(3)
+    // Turn the actual website reply into work, resolve it, then reply explicitly.
+    await dashboard.getByRole('button', { name: 'Track an issue', exact: true }).click()
+    const issueDialog = dashboard.getByRole('dialog', { name: 'Track an issue' })
+    await issueDialog.getByLabel('Issue title', { exact: true }).fill('Clarify delivery times')
+    await issueDialog.getByLabel('Summary for your team (optional)').fill('Internal summary: update the delivery information.')
+    await issueDialog.getByRole('button', { name: 'Create issue', exact: true }).click()
+    await expect(issueDialog).not.toBeVisible()
+    const issueLink = dashboard.locator('.conversation-issues').getByRole('link')
+    await expect(issueLink).toContainText('Clarify delivery times')
+    await issueLink.click()
+    await dashboard.getByLabel('Issue status', { exact: true }).selectOption('resolved')
+    await dashboard.getByLabel('Internal context for this change', { exact: true }).fill('Private deployment note. Never send this to the visitor.')
+    await dashboard.getByRole('button', { name: 'Update issue', exact: true }).click()
+    await expect(dashboard.getByRole('button', { name: 'Update issue', exact: true })).toBeDisabled()
+    await expect(widget.getByRole('log')).not.toContainText('Private deployment note')
+    await expect(widget.getByRole('log')).not.toContainText('Internal summary')
+    expect(sql(`SELECT count(*) FROM website_chat_messages WHERE project_id='${project}';`)).toBe('3')
+    await dashboard.getByRole('link', { name: /Return to conversation/ }).click()
+    await expect(dashboard.locator('.conversation-issues')).toContainText('Resolved')
+    await dashboard.getByRole('textbox', { name: /^Message to Visitor/ }).fill('We updated the delivery information. Thanks for pointing it out.')
+    await dashboard.getByRole('button', { name: 'Send message', exact: true }).click()
+    await expect(widget.getByRole('log')).toContainText('We updated the delivery information. Thanks for pointing it out.')
     await widget.getByRole('button', { name: 'Give feedback', exact: true }).click()
     await expect(widget.getByText('How was your visit?')).toBeVisible()
     await widget.getByRole('textbox', { name: 'Feedback', exact: true }).fill('This website conversation was helpful.')

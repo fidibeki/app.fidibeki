@@ -57,3 +57,9 @@ Use actual product examples and verify every procedure in the app before publish
 These are a content backlog, not pages claimed as published. No additional competitor names, duplicate keyword pages or unverified customer case studies are necessary to support the current comparison set.
 
 For authority, a real customer case study and useful integration guides offer material others can reference. External outreach, directory submissions and customer endorsements require their own authorization and evidence. None were sent or invented during this work.
+
+### Conversation-led positioning, 2 October 2026
+
+The product now links visitor messages to issues, with a return path for manual chat replies. `/features/website-conversations` explains this implemented workflow and links to issue tracking and the separate opted-in reporter email flow. It is available in all four locales and included in generated canonical/hreflang metadata, sitemap, Markdown and `llms.txt`. Comparison tables now start with conversation and follow-up, before discussing prices. Canny comparisons acknowledge private boards and roadmaps.
+
+Evaluate this positioning through trial activation and customer interviews; no ranking or conversion improvement has been measured. A useful activation event to define is completing the first visitor message → issue → reply journey. Existing analytics do not yet measure that full product journey.

@@ -31,7 +31,7 @@ for (const locale of marketingLocales) {
       )
       await page.locator(`.hero-actions a[href="${versus}"]`).click()
       await expect(page.locator('h1')).toContainText(competitor.name)
-      await expect(page.locator('.comparison-table tbody tr')).toHaveCount(3)
+      await expect(page.locator('.comparison-table tbody tr')).toHaveCount(competitor.versus.rows.length)
       await expect(page.locator('#switching')).toHaveCount(0)
       await expect(page.locator('link[rel="canonical"]')).toHaveAttribute(
         'href',

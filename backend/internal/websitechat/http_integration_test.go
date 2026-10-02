@@ -254,6 +254,9 @@ func TestWebsiteChatJourney(t *testing.T) {
 		t.Fatalf("unexpected reply: %s", thread["messages"])
 	}
 	request("GET", "/v1/widget/chat/conversation", visitorID, nil, 401)
+	t.Run("conversation issue bridge", func(t *testing.T) {
+		testIssueLinks(t, ctx, pool, begin, jwt, token, tenantID, projectID, visitorID, request)
+	})
 	t.Run("presence, read markers and inbox are scoped to the website", func(t *testing.T) {
 		tab := uuid.NewString()
 		request("PUT", "/v1/widget/chat/presence", visitorToken, map[string]any{"tab_id": tab, "page_url": "https://shop.test/orders/private?token=secret", "state": "active"}, 204)

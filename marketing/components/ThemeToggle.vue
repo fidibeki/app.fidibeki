@@ -5,7 +5,11 @@ import { Moon, Sun } from '@lucide/vue'
 
 const { theme, toggle, syncFromDocument } = useTheme()
 
-onMounted(syncFromDocument)
+const ready = ref(false)
+onMounted(() => {
+  syncFromDocument()
+  ready.value = true
+})
 
 const label = computed(() =>
   theme.value === 'dark' ? 'Switch to light theme' : 'Switch to dark theme',
@@ -16,6 +20,7 @@ const label = computed(() =>
   <button
     type="button"
     class="theme-toggle"
+    :disabled="!ready"
     :aria-label="copy(label)"
     :title="copy(label)"
     @click="toggle"

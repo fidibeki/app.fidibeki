@@ -76,7 +76,7 @@ if (widgetTestimonialsKey) {
           /></NuxtLinkLocale>
         </div>
         <NuxtLinkLocale
-          to="/use-cases/customer-support"
+          to="/features/website-conversations"
           class="home-conversation-story"
         >
           <img
@@ -102,12 +102,12 @@ if (widgetTestimonialsKey) {
           <p>
             {{
               copy(
-                "See who's on your website. Offer help, ask a question, or let visitors message your team. All through the same widget they use for feedback.",
+                "See who is using your website. Ask what is getting in their way, turn a useful message into a tracked issue, and return to the conversation with an answer.",
               )
             }}
           </p>
           <NuxtLinkLocale
-            to="/use-cases/customer-support"
+            to="/features/website-conversations"
             :aria-label="copy('Learn about website conversations')"
             ><ArrowUpRight :size="24" aria-hidden="true"
           /></NuxtLinkLocale>
