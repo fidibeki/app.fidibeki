@@ -126,6 +126,7 @@ export async function startReplayCapture(options: ReplayCaptureOptions): Promise
       event,
       location.target,
       id => record.mirror.getNode(id),
+      options.rule.replay_mask_text_selector,
     )
     if (sanitized === null) {
       options.onError?.(new Error('replay event failed anonymity sanitization and was dropped'))
@@ -143,12 +144,11 @@ export async function startReplayCapture(options: ReplayCaptureOptions): Promise
 
   const stopRecording = record<unknown>({
     emit: captureEvent,
-    // Input and text masking are anonymity-safe defaults, not customer-configurable: they do
-    // not depend on `replay_mask_all_inputs`/`replay_mask_text_selector` so a misconfigured or
-    // absent rule setting can never weaken the default. See modules/privacy.ts.
+    // Always redact inputs; inspect all text for contact details and configured private regions.
     maskAllInputs: true,
     maskTextSelector: replayMaskTextSelector(),
-    maskTextFn: createReplayMaskTextFn(),
+    maskTextFn: createReplayMaskTextFn(options.rule.replay_mask_text_selector),
+    inlineStylesheet: true,
     blockSelector: '[data-fidibeki-block]',
     slimDOMOptions: true,
     // Anonymous replay cannot prove that rendered pixels contain no identity.

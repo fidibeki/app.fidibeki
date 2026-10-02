@@ -91,3 +91,14 @@ a8bd371a0f0c1ff0f1b94bb25bc0bd590dc590e2:backend/internal/emailfeedback/http_int
 # commit, now replaced with random per-run keys. Neither value was deployed.
 54487de11d2c2e895442a5f4c6caf7eadd81029a:scripts/test-live-support.sh:generic-api-key:36
 54487de11d2c2e895442a5f4c6caf7eadd81029a:scripts/test-live-support.sh:generic-api-key:37
+
+# Marketing DPA prose describes storage isolation and contains no credential.
+# Both source strings
+# and the English catalog were flagged in the design branch and squash commit.
+6d4e8562bf7efd6522808708806c6cafcaee1cc9:marketing/pages/dpa.vue:generic-api-key:634
+6d4e8562bf7efd6522808708806c6cafcaee1cc9:marketing/i18n/locales/en.json:generic-api-key:170
+ee2db82a968203f8058ca595295359ff297d014b:marketing/pages/dpa.vue:generic-api-key:634
+ee2db82a968203f8058ca595295359ff297d014b:marketing/i18n/locales/en.json:generic-api-key:170
+
+# The original explanatory comment quoted the same prose.
+74b5f0a435d1a66a736ce4620cbef1d6740c276d:.gitleaksignore:generic-api-key:95

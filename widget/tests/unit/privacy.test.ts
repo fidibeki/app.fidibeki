@@ -56,9 +56,10 @@ describe('replayMaskTextSelector', () => {
 })
 
 describe('createReplayMaskTextFn', () => {
-  it('masks text by default', () => {
+  it('masks text inside private regions', () => {
     const maskText = createReplayMaskTextFn()
     const element = document.createElement('span')
+    element.setAttribute('data-fidibeki-mask', '')
     expect(maskText('Jane Doe', element)).toBe('**** ***')
   })
 
@@ -67,7 +68,7 @@ describe('createReplayMaskTextFn', () => {
     expect(maskText('jane.doe@example.com', null)).toBe('********************')
   })
 
-  it('leaves text unmasked only inside an explicit safe opt-in region', () => {
+  it('preserves ordinary text inside a legacy safe-text region', () => {
     const maskText = createReplayMaskTextFn()
     const container = document.createElement('div')
     container.setAttribute(SAFE_TEXT_ATTRIBUTE, '')
@@ -80,6 +81,7 @@ describe('createReplayMaskTextFn', () => {
   it('preserves whitespace so layout-relevant line breaks are unaffected', () => {
     const maskText = createReplayMaskTextFn()
     const element = document.createElement('p')
+    element.setAttribute('data-private', '')
     expect(maskText('Jane\nDoe', element)).toBe('****\n***')
   })
 })
@@ -116,7 +118,7 @@ describe('sanitizeReplayEvent', () => {
                 alt: 'Jane Doe', title: 'Jane Doe', 'aria-label': 'Jane Doe', 'data-user-id': '42', width: '80',
               },
               childNodes: [
-                { type: 3, textContent: 'sentinel text left unmasked by rrweb would leak here' },
+                { type: 3, textContent: 'Ordinary page instructions' },
               ],
             },
           ],
@@ -130,80 +132,10 @@ describe('sanitizeReplayEvent', () => {
       }> } }
     }
     const element = sanitized.data.node.childNodes[0]!
-    expect(element.attributes).toEqual({})
+    expect(element.attributes).toEqual({ id: 'user-avatar-42', class: 'avatar', src: null, alt: '**** ***', title: '**** ***', 'aria-label': '**** ***', width: '80' })
     expect(element.childNodes[0]!.textContent).toBe(
-      '******** **** **** ******** ** ***** ***** **** ****',
+      'Ordinary page instructions',
     )
-  })
-
-  it('replaces raw attributes with computed presentation from the mirrored live element', () => {
-    const live = document.createElement('div')
-    live.className = 'private-account-jane'
-    live.style.cssText = [
-      'display: grid',
-      'position: relative',
-      'box-sizing: border-box',
-      'width: 320px',
-      'height: 180px',
-      'margin-top: 12px',
-      'padding-left: 16px',
-      'row-gap: 8px',
-      'background-color: rgb(255, 255, 255)',
-      'color: rgb(23, 32, 29)',
-      'font-family: "Jane Doe Private", sans-serif',
-      'font-size: 16px',
-      'font-weight: 600',
-      'line-height: 24px',
-      'background-image: url("https://example.com/avatar/jane")',
-      '--reporter-email: "jane@example.com"',
-    ].join(';')
-    document.body.append(live)
-
-    const event = {
-      type: 2,
-      timestamp: 1,
-      data: {
-        node: {
-          type: 2,
-          id: 7,
-          tagName: 'div',
-          attributes: {
-            class: 'private-account-jane',
-            style: 'background-image:url("https://example.com/avatar/jane")',
-            'data-email': 'jane@example.com',
-          },
-          childNodes: [],
-        },
-      },
-    }
-    const sanitized = sanitizeReplayEventForSession(
-      event,
-      sessionPageURL,
-      id => id === 7 ? live : null,
-    ) as { data: { node: { attributes: Record<string, unknown> } } }
-
-    expect(sanitized.data.node.attributes).toEqual({
-      style: [
-        'display:grid',
-        'position:relative',
-        'box-sizing:border-box',
-        'width:320px',
-        'height:180px',
-        'margin-top:12px',
-        'padding-left:16px',
-        'row-gap:8px',
-        'background-color:rgb(255, 255, 255)',
-        'color:rgb(23, 32, 29)',
-        'font-family:sans-serif',
-        'font-size:16px',
-        'font-style:normal',
-        'font-weight:600',
-        'line-height:24px',
-      ].join(';'),
-    })
-    expect(JSON.stringify(sanitized)).not.toContain('Jane')
-    expect(JSON.stringify(sanitized)).not.toContain('jane')
-    expect(JSON.stringify(sanitized)).not.toContain('url(')
   })
 
   it('blanks HTML comment text, which rrweb text-masking does not cover', () => {
@@ -250,41 +182,7 @@ describe('sanitizeReplayEvent', () => {
     const sanitized = sanitizeReplayEvent(event) as {
       data: { attributes: Array<{ attributes: Record<string, unknown> }> }
     }
-    expect(sanitized.data.attributes[0]!.attributes).toEqual({})
-  })
-
-  it('replaces an attribute mutation with the mirrored element current presentation', () => {
-    const live = document.createElement('section')
-    live.className = 'private-state-jane'
-    live.style.cssText = 'display:flex;column-gap:10px;background-color:rgb(10, 20, 30)'
-    document.body.append(live)
-    const event = {
-      type: 3, timestamp: 1,
-      data: {
-        source: 0,
-        attributes: [{
-          id: 17,
-          attributes: {
-            class: 'private-state-jane',
-            style: 'background-image:url("https://example.com/jane")',
-          },
-        }],
-        texts: [], adds: [], removes: [],
-      },
-    }
-    const sanitized = sanitizeReplayEventForSession(
-      event,
-      sessionPageURL,
-      id => id === 17 ? live : null,
-    ) as { data: { attributes: Array<{ attributes: Record<string, unknown> }> } }
-    const attributes = sanitized.data.attributes[0]!.attributes
-
-    expect(attributes.style).toContain('display:flex')
-    expect(attributes.style).toContain('column-gap:10px')
-    expect(attributes.style).toContain('background-color:rgb(10, 20, 30)')
-    expect(JSON.stringify(attributes)).not.toContain('Jane')
-    expect(JSON.stringify(attributes)).not.toContain('jane')
-    expect(JSON.stringify(attributes)).not.toContain('url(')
+    expect(sanitized.data.attributes[0]!.attributes).toEqual({ id: 'user-42', title: '**** ***', style: 'color: red;' })
   })
 
   it('sanitizes newly-added node subtrees in incremental mutations', () => {
@@ -306,43 +204,10 @@ describe('sanitizeReplayEvent', () => {
     const sanitized = sanitizeReplayEvent(event) as {
       data: { adds: Array<{ node: { attributes: Record<string, unknown> } }> }
     }
-    expect(sanitized.data.adds[0]!.node.attributes).toEqual({})
+    expect(sanitized.data.adds[0]!.node.attributes).toEqual({ class: 'card' })
   })
 
-  it('adds computed presentation to mirrored incremental node subtrees', () => {
-    const live = document.createElement('article')
-    live.className = 'private-card-jane'
-    live.style.cssText = 'display:grid;width:240px;padding-left:16px'
-    document.body.append(live)
-    const event = {
-      type: 3, timestamp: 1,
-      data: {
-        source: 0,
-        attributes: [], texts: [], removes: [],
-        adds: [{
-          parentId: 1, nextId: null,
-          node: {
-            type: 2, id: 23, tagName: 'article',
-            attributes: { class: 'private-card-jane', 'data-reporter': 'jane@example.com' },
-            childNodes: [],
-          },
-        }],
-      },
-    }
-    const sanitized = sanitizeReplayEventForSession(
-      event,
-      sessionPageURL,
-      id => id === 23 ? live : null,
-    ) as { data: { adds: Array<{ node: { attributes: Record<string, unknown> } }> } }
-    const attributes = sanitized.data.adds[0]!.node.attributes
-
-    expect(attributes.style).toContain('display:grid')
-    expect(attributes.style).toContain('width:240px')
-    expect(attributes.style).toContain('padding-left:16px')
-    expect(JSON.stringify(attributes)).not.toContain('jane')
-  })
-
-  it('falls back to marker-only attributes when a mirrored node cannot be resolved', () => {
+  it('preserves sanitized native attributes when the mirror is unavailable', () => {
     const event = {
       type: 2, timestamp: 1,
       data: {
@@ -361,43 +226,11 @@ describe('sanitizeReplayEvent', () => {
       data: {
         node: {
           type: 2, id: 31, tagName: 'div',
-          attributes: { [SAFE_TEXT_ATTRIBUTE]: '' },
+          attributes: { [SAFE_TEXT_ATTRIBUTE]: '', class: 'private-account-jane' },
           childNodes: [{ type: 3, textContent: 'Known static text' }],
         },
       },
     })
-  })
-
-  it('falls back to marker-only attributes when computed presentation cannot be read', () => {
-    const live = document.createElement('div')
-    live.className = 'private-account-jane'
-    const getComputedStyle = vi
-      .spyOn(window, 'getComputedStyle')
-      .mockImplementationOnce(() => {
-        throw new Error('computed style unavailable')
-      })
-    const event = {
-      type: 2, timestamp: 1,
-      data: {
-        node: {
-          type: 2, id: 32, tagName: 'div',
-          attributes: { [SAFE_TEXT_ATTRIBUTE]: '', class: 'private-account-jane' },
-          childNodes: [],
-        },
-      },
-    }
-
-    expect(sanitizeReplayEventForSession(event, sessionPageURL, () => live)).toEqual({
-      type: 2, timestamp: 1,
-      data: {
-        node: {
-          type: 2, id: 32, tagName: 'div',
-          attributes: { [SAFE_TEXT_ATTRIBUTE]: '' },
-          childNodes: [],
-        },
-      },
-    })
-    getComputedStyle.mockRestore()
   })
 
   it('passes through incremental sources unrelated to mutations unchanged', () => {
@@ -432,7 +265,7 @@ describe('sanitizeReplayEvent', () => {
   })
 
   it('suppresses canvas, string-bearing, and unknown incremental sources', () => {
-    for (const source of [8, 9, 10, 11, 13, 15, 16, 999]) {
+    for (const source of [9, 10, 11, 15, 999]) {
       expect(sanitizeReplayEvent({
         type: 3, timestamp: 1, data: { source, value: 'jane.doe@example.com' },
       })).toBeNull()
@@ -444,12 +277,12 @@ describe('sanitizeReplayEvent', () => {
       type: 3, timestamp: 1,
       data: {
         source: 0, attributes: [], adds: [], removes: [],
-        texts: [{ id: 7, value: 'Jane Doe' }],
+        texts: [{ id: 7, value: 'jane@example.com' }],
       },
     }
     expect(sanitizeReplayEvent(mutation)).toEqual({
       ...mutation,
-      data: { ...mutation.data, texts: [{ id: 7, value: '**** ***' }] },
+      data: { ...mutation.data, texts: [{ id: 7, value: '****************' }] },
     })
     const input = { type: 3, timestamp: 2, data: { source: 5, id: 8, text: 'jane@example.com' } }
     expect(sanitizeReplayEvent(input)).toEqual({
@@ -457,7 +290,7 @@ describe('sanitizeReplayEvent', () => {
     })
   })
 
-  it('keeps safe text only with the explicit canonical marker', () => {
+  it('supports the legacy safe marker without discarding layout classes', () => {
     const event = {
       type: 2, timestamp: 1,
       data: {
@@ -473,7 +306,7 @@ describe('sanitizeReplayEvent', () => {
       data: {
         node: {
           type: 2,
-          attributes: { [SAFE_TEXT_ATTRIBUTE]: '' },
+          attributes: { [SAFE_TEXT_ATTRIBUTE]: '', class: 'private-account' },
           childNodes: [{ type: 3, textContent: 'Known static text' }],
         },
       },

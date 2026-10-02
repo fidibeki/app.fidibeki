@@ -2,69 +2,70 @@
   "valid": [
     {
       "name": "layout and typography",
-      "style": "display:grid;position:relative;box-sizing:border-box;width:320px;height:180px;margin-top:12px;padding-left:16px;row-gap:8px;background-color:rgb(255, 255, 255);color:rgb(23, 32, 29);font-family:sans-serif;font-size:16px;font-weight:600;line-height:24px"
+      "inline": true,
+      "style": "display: grid; border: 0; color: rgb(23, 32, 29); font-family: Inter, sans-serif;"
     },
     {
-      "name": "flex decoration and transform",
-      "style": "display:flex;opacity:0.8;border-top-width:1px;border-top-style:solid;border-top-color:rgba(0, 0, 0, 0.2);border-top-left-radius:6px;flex-direction:row;flex-wrap:wrap;flex-grow:0;flex-shrink:1;justify-content:space-between;align-items:center;column-gap:10px;transform:matrix(1, 0, 0, 1, 4, 8);transform-origin:120px 40px"
+      "name": "native variables and gradients",
+      "inline": true,
+      "style": "--accent: red; color: var(--accent); background: linear-gradient(red, blue);"
     },
     {
-      "name": "marker without presentation",
-      "style": ""
+      "name": "native cascade and responsive layout",
+      "inline": false,
+      "style": "@media (min-width: 640px) { .dashboard { display: grid; } }"
     },
     {
-      "name": "complete canonical property set",
-      "style": "display:grid;position:absolute;box-sizing:border-box;top:0px;right:auto;bottom:-2px;left:10%;z-index:3;visibility:hidden;opacity:0.5;width:640px;height:320px;min-width:0px;min-height:24px;max-width:none;max-height:800px;margin-top:0px;margin-right:auto;margin-bottom:12px;margin-left:auto;padding-top:8px;padding-right:10px;padding-bottom:12px;padding-left:14px;overflow-x:hidden;overflow-y:auto;aspect-ratio:16 / 9;border-top-width:1px;border-right-width:2px;border-bottom-width:3px;border-left-width:4px;border-top-style:solid;border-right-style:dashed;border-bottom-style:dotted;border-left-style:double;border-top-color:rgb(1, 2, 3);border-right-color:rgba(4, 5, 6, 0.5);border-bottom-color:transparent;border-left-color:rgb(7, 8, 9);border-top-left-radius:4px;border-top-right-radius:5px 6px;border-bottom-right-radius:7px;border-bottom-left-radius:8px;outline-width:1px;outline-style:solid;outline-color:rgb(10, 11, 12);flex-direction:column;flex-wrap:wrap;flex-grow:1;flex-shrink:0;flex-basis:auto;order:-1;justify-content:space-between;align-items:center;align-content:stretch;align-self:auto;column-gap:10px;row-gap:12px;grid-auto-flow:row dense;grid-template-columns:120px 200px;grid-template-rows:auto 80px;grid-auto-columns:min-content;grid-auto-rows:max-content;background-color:rgb(250, 252, 251);color:rgb(23, 32, 29);font-family:monospace;font-size:16px;font-style:italic;font-weight:600;line-height:24px;letter-spacing:1px;text-align:center;white-space:pre-wrap;text-transform:uppercase;object-fit:cover;object-position:50% 40%;border-collapse:collapse;table-layout:fixed;transform:matrix(1, 0, 0, 1, 4, 8);transform-origin:120px 40px"
+      "name": "static font resources",
+      "inline": false,
+      "style": "@font-face { font-family: Inter; src: url(\"https://cdn.example.com/fonts/inter.woff2\"); }"
+    },
+    {
+      "name": "empty generated decoration",
+      "inline": false,
+      "style": ".card::before { content: \"\"; border: 1px solid red; }"
+    },
+    {
+      "name": "SVG fragment paint",
+      "inline": true,
+      "style": "clip-path: url(#clip);"
     }
   ],
   "invalid": [
     {
-      "name": "unknown property",
-      "style": "display:block;--reporter:jane@example.com"
+      "name": "personal custom property",
+      "inline": true,
+      "style": "--email: \"jane@example.com\";"
     },
     {
-      "name": "url value",
-      "style": "background-color:url(https://example.com/avatar/jane)"
+      "name": "private resource URL",
+      "inline": true,
+      "style": "background-image: url(\"https://example.com/avatar/jane.png\");"
     },
     {
-      "name": "raw font name",
-      "style": "font-family:Jane-Doe-Private"
+      "name": "signed resource URL",
+      "inline": true,
+      "style": "background-image: url(\"https://example.com/logo.png?token=secret\");"
     },
     {
-      "name": "out of order",
-      "style": "width:320px;display:grid"
+      "name": "escaped resource URL",
+      "inline": true,
+      "style": "background-image: u\\72l(\"https://example.com/avatar/jane.png\");"
     },
     {
-      "name": "duplicate",
-      "style": "display:grid;display:flex"
+      "name": "generated personal text",
+      "inline": true,
+      "style": "content: \"Jane Doe\";"
     },
     {
-      "name": "non finite number",
-      "style": "opacity:NaN"
+      "name": "generated attribute text",
+      "inline": true,
+      "style": "content: attr(data-name);"
     },
     {
-      "name": "grid line identifier",
-      "style": "grid-template-columns:[jane-private] 100px"
-    },
-    {
-      "name": "generated content",
-      "style": "content:jane@example.com"
-    },
-    {
-      "name": "non canonical case",
-      "style": "display:GRID"
-    },
-    {
-      "name": "non canonical spacing",
-      "style": "display: grid"
-    },
-    {
-      "name": "invalid color channel",
-      "style": "color:rgb(300, 0, 0)"
-    },
-    {
-      "name": "invalid transform arity",
-      "style": "transform:matrix(1, 0, 0)"
+      "name": "inline image pixels",
+      "inline": true,
+      "style": "background-image: url(\"data:image/png;base64,secret\");"
     }
   ]
 }

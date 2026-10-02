@@ -53,7 +53,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <span class="member-avatar">
+  <span class="member-avatar" data-fidibeki-block>
     <img
       v-if="imageURL && !failed"
       :src="imageURL"

@@ -20,7 +20,7 @@ session replay grant never authorizes analytics collection, and vice versa.
   controller and does not certify that the customer's wording or legal basis is sufficient.
 - In customer-managed mode, the customer's CMP remains the source of truth for the complete consent
   proof. Fidibeki stores only the structured assertion needed to enforce capture.
-- Consent never relaxes the anonymous replay contract. Text/input masking, attribute removal,
+- Consent never relaxes replay privacy controls. Private-region/input masking, attribute filtering,
   rule-safe URLs, canvas suppression, event validation, retention, and access controls still apply.
 
 The DPA and public privacy materials should describe session replay, consent-evidence processing,
@@ -130,7 +130,7 @@ non-substantive still need an auditable configuration revision.
 - Confirm the privacy-policy URL is HTTPS and controlled by the customer.
 - Verify no replay request occurs before acceptance.
 - Verify withdrawal immediately stops capture and new uploads.
-- Verify anonymous sentinel values and canvas pixels never reach uploaded or rendered replay.
+- Verify marked private content, form values, recognizable contact details, and canvas pixels never reach uploaded or rendered replay. See [capture and private content](session-replay-capture.md).
 - Verify consent diagnostics expose state and timestamps without identifiers or raw CMP references.
 - Verify evidence and replay retention against the approved DPA/privacy terms.
 - Verify the current subprocessor list and environment-specific provider configuration.
