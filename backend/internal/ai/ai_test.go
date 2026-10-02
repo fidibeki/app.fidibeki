@@ -143,7 +143,7 @@ func TestGeminiAnalyzerProcessesTextAndMediaLifecycle(t *testing.T) {
 		getFiles:   []*genai.File{{Name: "files/media", State: genai.FileStateActive}},
 		response: structuredGeminiResponse(`{
 			"transcription":"spoken words","cleaned_text":"clear feedback",
-			"sentiment_score":-0.25,"moderation_flags":[" Profanity ","profanity"]
+			"sentiment_score":-0.25,"moderation_flags":[" Profanity ","profanity"], "suggested_title":"Feedback", "actionability":"actionable", "category":"general", "priority":"medium"
 		}`),
 	}
 	analyzer := &GeminiAnalyzer{
@@ -178,7 +178,7 @@ func TestGeminiAnalyzerProcessesTextAndMediaLifecycle(t *testing.T) {
 func TestGeminiAnalyzerMinimizesReporterIdentifiersBeforeProviderRequest(t *testing.T) {
 	t.Parallel()
 	api := &fakeGeminiAPI{response: structuredGeminiResponse(
-		`{"transcription":"","cleaned_text":"[REDACTED]","sentiment_score":0,"moderation_flags":[]}`,
+		`{"transcription":"","cleaned_text":"[REDACTED]","sentiment_score":0,"moderation_flags":[],"suggested_title":"Feedback","actionability":"actionable","category":"general","priority":"medium"}`,
 	)}
 	analyzer := &GeminiAnalyzer{api: api, model: "gemini-test", fileLedger: &fakeGeminiLedger{}}
 	sentinel := "private.person@example.com"
@@ -230,7 +230,7 @@ func TestGeminiAnalyzerClassifiesServiceAndResponseFailures(t *testing.T) {
 		{name: "empty response", permanent: true, api: &fakeGeminiAPI{response: &genai.GenerateContentResponse{}}},
 		{name: "invalid JSON", permanent: true, api: &fakeGeminiAPI{response: structuredGeminiResponse(`not-json`)}},
 		{name: "invalid score", permanent: true, api: &fakeGeminiAPI{response: structuredGeminiResponse(
-			`{"transcription":"","cleaned_text":"x","sentiment_score":2,"moderation_flags":[]}`,
+			`{"transcription":"","cleaned_text":"x","sentiment_score":2,"moderation_flags":[],"suggested_title":"Feedback","actionability":"actionable","category":"general","priority":"medium"}`,
 		)}},
 	}
 	for _, tt := range tests {
@@ -286,7 +286,7 @@ func TestGeminiAnalyzerClassifiesServiceAndResponseFailures(t *testing.T) {
 func TestGeminiFileDeletionRetriesAndPersistsFailures(t *testing.T) {
 	t.Parallel()
 	response := structuredGeminiResponse(
-		`{"transcription":"words","cleaned_text":"words","sentiment_score":0,"moderation_flags":[]}`,
+		`{"transcription":"words","cleaned_text":"words","sentiment_score":0,"moderation_flags":[],"suggested_title":"Feedback","actionability":"actionable","category":"general","priority":"medium"}`,
 	)
 	successAPI := &fakeGeminiAPI{
 		uploadFile: &genai.File{Name: "files/retry", State: genai.FileStateActive},
@@ -692,7 +692,7 @@ func TestQueueHandlesConflictsAndClientFailures(t *testing.T) {
 	if got := truncateError(nil); got != "" {
 		t.Errorf("truncateError(nil) = %q", got)
 	}
-	if got := truncateError(errors.New(strings.Repeat("x", 2100))); len(got) != 2000 {
+	if got := truncateError(errors.New(strings.Repeat("x", 2100))); got != "internal_error" {
 		t.Errorf("truncateError(long) length = %d", len(got))
 	}
 	if permanent(nil) != nil {

@@ -271,7 +271,7 @@ func TestStoreEnforcesLifecycleIdempotencyImmutabilityAndTenantIsolation(t *test
 	}
 	if providerIntake.ProviderID != providerInput.ProviderID ||
 		providerIntake.ProviderDisplayName != "Resend transactional email" ||
-		providerIntake.GovernanceRegistryVersion != 1 ||
+		providerIntake.GovernanceRegistryVersion != 2 ||
 		providerIntake.PrimaryRetentionCategory != "external_communications" ||
 		!providerIntake.ReceivedAt.Equal(now) ||
 		!providerIntake.CreatedAt.Equal(now) ||

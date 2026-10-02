@@ -84,6 +84,15 @@ type Config struct {
 	DomainConcurrency         int
 	MediaConcurrency          int
 	PrivacyConcurrency        int
+	AIManagedMode             string
+	AIProviders               string
+	AITenants                 string
+	AIEncryptionKeys          string
+	AIActiveEncryptionKey     string
+	AIAWSAccessKey            string
+	AIAWSSecretKey            string
+	AIAWSSessionToken         string
+	AIAWSCallerARN            string
 	GeminiAPIKey              string
 	GeminiModel               string
 	GeminiRPM                 int
@@ -214,6 +223,15 @@ func FromLookup(lookup LookupEnv) (Config, error) {
 		DomainConcurrency:         domainConcurrency,
 		MediaConcurrency:          mediaConcurrency,
 		PrivacyConcurrency:        privacyConcurrency,
+		AIManagedMode:             get("AI_MANAGED_MODE", "enabled"),
+		AIProviders:               get("AI_CUSTOMER_PROVIDERS", ""),
+		AITenants:                 get("AI_CUSTOMER_TENANTS", ""),
+		AIEncryptionKeys:          get("AI_ENCRYPTION_KEYS", ""),
+		AIActiveEncryptionKey:     get("AI_ACTIVE_ENCRYPTION_KEY", "v1"),
+		AIAWSAccessKey:            get("AI_AWS_ACCESS_KEY_ID", ""),
+		AIAWSSecretKey:            get("AI_AWS_SECRET_ACCESS_KEY", ""),
+		AIAWSSessionToken:         get("AI_AWS_SESSION_TOKEN", ""),
+		AIAWSCallerARN:            get("AI_AWS_CALLER_ARN", ""),
 		GeminiAPIKey:              get("GEMINI_API_KEY", ""),
 		GeminiModel:               get("GEMINI_MODEL", "gemini-3.1-flash-lite"),
 		GeminiRPM:                 geminiRPM,
@@ -576,7 +594,10 @@ func (c Config) validate() []error {
 		validationErrors = append(validationErrors,
 			fmt.Errorf("DIGEST_MEMBERS_PER_RUN must be positive"))
 	}
-	if c.Environment == "production" && c.GeminiAPIKey == "" {
+	if c.AIManagedMode != "" && c.AIManagedMode != "enabled" && c.AIManagedMode != "disabled" {
+		validationErrors = append(validationErrors, fmt.Errorf("AI_MANAGED_MODE must be enabled or disabled"))
+	}
+	if c.Environment == "production" && c.AIManagedMode != "disabled" && c.GeminiAPIKey == "" {
 		validationErrors = append(validationErrors, fmt.Errorf("GEMINI_API_KEY is required in production"))
 	}
 	if c.Environment == "production" || c.Environment == "staging" {
@@ -783,6 +804,12 @@ func (c Config) Redacted() map[string]any {
 		"readiness_timeout":            c.ReadinessTimeout.String(),
 		"shutdown_timeout":             c.ShutdownTimeout.String(),
 	}
+	redacted["ai_encryption_keys"] = "[REDACTED]"
+	redacted["ai_aws_access_key_id"] = "[REDACTED]"
+	redacted["ai_aws_secret_access_key"] = "[REDACTED]"
+	redacted["ai_aws_session_token"] = "[REDACTED]"
+	redacted["ai_managed_mode"] = c.AIManagedMode
+	redacted["ai_customer_providers"] = c.AIProviders
 	redacted["email_task_signing_key"] = "[REDACTED]"
 	redacted["email_task_previous_signing_key"] = "[REDACTED]"
 	return redacted

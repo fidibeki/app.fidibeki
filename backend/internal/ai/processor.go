@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/acidiney/app.fidibeki/backend/internal/abuse"
+	"github.com/acidiney/app.fidibeki/backend/internal/aiprovider"
 	"github.com/acidiney/app.fidibeki/backend/internal/ratelimit"
 	"github.com/hibiken/asynq"
 	"google.golang.org/genai"
@@ -21,6 +22,9 @@ type ObjectSource interface {
 }
 
 type Processor struct {
+	Factory *ProviderFactory
+	Leaser  ConnectionLeaser
+
 	Store       Store
 	Analyzer    Analyzer
 	Storage     ObjectSource
@@ -49,9 +53,11 @@ func (p Processor) TextHandler() asynq.HandlerFunc {
 		if err != nil {
 			return err
 		}
-		if err := p.acquire(ctx); err != nil {
+		analyzer, _, release, err := p.resolve(ctx, work.TenantID, work.Execution, "feedback_text", work.RunID, func(ctx context.Context) (bool, error) { return p.Store.AuthorizeTextForProvider(ctx, work, p.now()) })
+		if err != nil {
 			return p.handleTextFailure(ctx, work, err)
 		}
+		defer release()
 		authorized, err := p.Store.AuthorizeTextForProvider(ctx, work, p.now())
 		if err != nil {
 			return err
@@ -59,7 +65,7 @@ func (p Processor) TextHandler() asynq.HandlerFunc {
 		if !authorized {
 			return nil
 		}
-		result, err := p.Analyzer.AnalyzeText(ctx, work.Text)
+		result, err := analyzer.AnalyzeText(ctx, work.Text)
 		if err != nil {
 			return p.handleTextFailure(ctx, work, err)
 		}
@@ -92,9 +98,14 @@ func (p Processor) AttachmentHandler() asynq.HandlerFunc {
 		if err != nil {
 			return err
 		}
-		if err := p.acquire(ctx); err != nil {
+		analyzer, secret, release, err := p.resolve(ctx, work.TenantID, work.Execution, work.Kind, work.RunID, func(ctx context.Context) (bool, error) {
+			return p.Store.AuthorizeAttachmentForProvider(ctx, work, p.now())
+		})
+		if err != nil {
 			return p.handleAttachmentFailure(ctx, work, err)
 		}
+		defer release()
+		work.CredentialVersion, work.CredentialEnvelope = secret.Version, secret.Envelope
 		authorized, err := p.Store.AuthorizeAttachmentForProvider(ctx, work, p.now())
 		if err != nil {
 			return err
@@ -106,7 +117,7 @@ func (p Processor) AttachmentHandler() asynq.HandlerFunc {
 		if err != nil {
 			return p.handleAttachmentFailure(ctx, work, err)
 		}
-		result, analysisErr := p.Analyzer.AnalyzeAttachment(ctx, work, reader)
+		result, analysisErr := analyzer.AnalyzeAttachment(ctx, work, reader)
 		closeErr := reader.Close()
 		if analysisErr != nil {
 			return p.handleAttachmentFailure(ctx, work, analysisErr)
@@ -183,8 +194,12 @@ func safeFailureLogAttrs(failure error, retry retryMetadata) (slog.Level, bool, 
 	classification := "internal_error"
 	providerCode := 0
 
+	var classified *aiprovider.Failure
 	var apiError genai.APIError
-	if errors.As(failure, &apiError) {
+	if errors.As(failure, &classified) {
+		classification = "provider_" + classified.Code
+		providerCode = classified.Status
+	} else if errors.As(failure, &apiError) {
 		providerCode = apiError.Code
 		switch {
 		case apiError.Code == 401:
@@ -329,6 +344,10 @@ func (p Processor) recordProviderDiagnostic(
 }
 
 func providerDiagnosticReason(failure error) string {
+	var classified *aiprovider.Failure
+	if errors.As(failure, &classified) {
+		return "provider_" + classified.Code
+	}
 	var apiError genai.APIError
 	if errors.As(failure, &apiError) {
 		switch {

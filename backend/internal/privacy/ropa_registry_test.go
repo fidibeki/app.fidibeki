@@ -245,8 +245,8 @@ func TestProcessingActivityRegistryRecipientProvidersAreDerived(t *testing.T) {
 	if !ok {
 		t.Fatal("ai_assisted_triage activity not found")
 	}
-	if len(aiTriage.RecipientProviders) != 1 || aiTriage.RecipientProviders[0] != "google_gemini_api" {
-		t.Fatalf("ai_assisted_triage RecipientProviders = %v, want [google_gemini_api]", aiTriage.RecipientProviders)
+	if len(aiTriage.RecipientProviders) != 5 {
+		t.Fatalf("ai_assisted_triage RecipientProviders = %v, want all five AI recipients", aiTriage.RecipientProviders)
 	}
 
 	workspace, ok := byID["workspace_identity_and_access"]

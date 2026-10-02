@@ -23,7 +23,7 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 	}
 	const appPassword = "app password with 'quotes'"
 	const adminPassword = `admin:/password?#@`
-	const latestMigrationVersion = 142
+	const latestMigrationVersion = 143
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -1779,6 +1779,11 @@ func TestMigrationsEnforceTenantIsolation(t *testing.T) {
 		t.Fatalf("delete disposable launcher variant rule: %v", err)
 	}
 
+	// These synthetic RLS fixtures never created remote files. Complete their
+	// cleanup before exercising the guarded rollback of the customer-AI schema.
+	if _, err := root.Exec(ctx, `UPDATE ai_gemini_files SET deleted_at=now() WHERE (tenant_id=$1 AND file_name='files/rls-a') OR (tenant_id=$2 AND file_name='files/rls-b')`, tenantA, tenantB); err != nil {
+		t.Fatalf("complete synthetic Gemini file cleanup: %v", err)
+	}
 	if err := migrateToVersion(migrator, 48); err != nil {
 		t.Fatalf("roll back widget funnel analytics migration: %v", err)
 	}

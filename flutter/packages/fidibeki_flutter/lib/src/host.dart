@@ -1251,7 +1251,10 @@ final class _AiDisclosure extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
           Text(
-            messages.aiProcessingDisclosure,
+            messages.aiProcessingDisclosure.replaceAll(
+              '{provider}',
+              definition.aiProcessing?.providerLabel ?? 'Google Gemini',
+            ),
             style: TextStyle(color: text.withValues(alpha: 0.7), height: 1.4),
           ),
           TextButton(

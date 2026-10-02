@@ -29,11 +29,11 @@ func TestEffectiveRetentionForPlan(t *testing.T) {
 	}
 	if starter.Plan != tenant.PlanStarter ||
 		starter.RegistryVersion != retentionRegistryVersion ||
-		len(starter.Policies) != 36 {
+		len(starter.Policies) != 37 {
 		t.Fatalf("starter retention = %#v", starter)
 	}
 	if starter.Summary != (RetentionSummary{
-		Enforced: 15, Configurable: 3, ExternalControl: 4, DecisionRequired: 14,
+		Enforced: 15, Configurable: 3, ExternalControl: 5, DecisionRequired: 14,
 	}) {
 		t.Fatalf("starter retention summary = %#v", starter.Summary)
 	}
@@ -107,8 +107,8 @@ func TestRetentionRegistryCoversEveryMigratedTableExactlyOnce(t *testing.T) {
 			}
 		}
 	}
-	if len(migrated) != 104 {
-		t.Fatalf("migration table count = %d, want 104", len(migrated))
+	if len(migrated) != 107 {
+		t.Fatalf("migration table count = %d, want 107", len(migrated))
 	}
 	if !reflect.DeepEqual(registered, migrated) {
 		t.Fatalf(
@@ -138,7 +138,7 @@ func TestRetentionRegistryCoversKnownNonDatabaseBoundaries(t *testing.T) {
 		{
 			kind: RetentionQueue,
 			want: []string{
-				"ai-pool", "attachment-verification-pool", "domain-pool",
+				"ai-pool", "ai-pool-v2", "attachment-verification-pool", "domain-pool",
 				"email-pool", "privacy-pool", "replay-pool",
 			},
 		},
@@ -155,6 +155,7 @@ func TestRetentionRegistryCoversKnownNonDatabaseBoundaries(t *testing.T) {
 		{
 			kind: RetentionProvider,
 			want: []string{
+				"amazon_bedrock_api", "anthropic_api", "customer_ai_endpoint", "openai_api",
 				"cloudflare_turnstile", "customer_generic_webhook",
 				"customer_saml_identity_provider", "email_capture_filesystem",
 				"google_gemini_api", "jira_cloud_issue_tracker", "linear_issue_tracker",

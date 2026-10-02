@@ -15,6 +15,14 @@ describe('capture session and form contracts', () => {
     expect(validateCaptureSession(session())).toEqual(session())
   })
 
+  it('accepts a customer provider disclosure without private routing fields', () => {
+    const candidate = session()
+    candidate.configuration.definition.ai_processing!.provider = 'openai'
+    candidate.configuration.definition.ai_processing!.provider_label = 'OpenAI'
+    expect(validateCaptureSession(candidate)).toEqual(candidate)
+    expect(() => validateCaptureSession({...candidate, configuration: {...candidate.configuration, definition: {...candidate.configuration.definition, ai_processing: {...candidate.configuration.definition.ai_processing, connection_id: 'private'}}}})).toThrowError(MobileClientError)
+  })
+
   it.each(['launcher', 'prompt', 'inline', 'reaction'])(
     'accepts active definition presentation metadata %s',
     (presentation) => {

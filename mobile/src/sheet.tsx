@@ -826,7 +826,7 @@ export function FeedbackSheet() {
                   ) : null}
                   {discloseMobileAI ? (
                     <View style={styles.aiDisclosure}>
-                      <Text style={{ color: colors.muted }}>{context.messages.aiProcessingDisclosure}</Text>
+                      <Text style={{ color: colors.muted }}>{context.messages.aiProcessingDisclosure.replace('{provider}', definition.ai_processing?.provider_label || 'Google Gemini')}</Text>
                       <Pressable
                         accessibilityRole="link"
                         onPress={() => void Linking.openURL(definition.ai_processing!.privacy_policy_url!)}

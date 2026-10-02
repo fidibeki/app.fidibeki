@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ShieldCheck, X } from '@lucide/vue'
-import type { AIInputCategory, AIProcessingConfig } from '~/types/api'
+import type { AIInputCategory, AIProcessingConfig, AIConnection, AIProviderCatalog } from '~/types/api'
 
 const props = defineProps<{
   open: boolean
@@ -15,7 +15,49 @@ const emit = defineEmits<{
   confirm: [configuration: AIProcessingConfig]
 }>()
 const { t } = useI18n()
+const { $apiFetch } = useNuxtApp()
+const { can } = useAuth()
+const localizedError = useLocalizedAPIError()
 const identifier = useId()
+const connections = ref<AIConnection[]>([])
+const catalog = ref<AIProviderCatalog | null>(null)
+const connectionID = ref('managed')
+const modelID = ref('')
+const loadError = ref('')
+const loading = ref(false)
+const connection = computed(() => connections.value.find(c => c.id === connectionID.value))
+const models = computed(() => connection.value?.models?.filter(m => m.validated) || [])
+const selectedModel = computed(() => models.value.find(m => m.id === modelID.value))
+const providerLabel = computed(() => connectionID.value === 'managed' ? 'Google Gemini' : connection.value?.base_url ? new URL(connection.value.base_url).hostname : catalog.value?.providers.find(p => p.id === connection.value?.provider)?.name || props.initial.provider_label || '')
+const selectionValid = computed(() => !loading.value && !loadError.value && (connectionID.value === 'managed' ? catalog.value?.managed.available !== false : !!connection.value?.enabled && !!selectedModel.value && catalog.value?.providers.some(p => p.enabled && p.id === connection.value?.provider)))
+let loadGeneration = 0
+async function loadChoices() {
+  if (!can('ai_connection:read')) {
+    // Existing managed rules require no customer connection permission.
+    if (props.initial.billing_mode === 'customer') loadError.value = t('aiProviders.forbidden')
+    return
+  }
+  const generation = ++loadGeneration
+  loading.value = true; loadError.value = ''
+  try {
+    const [p, c] = await Promise.all([$apiFetch<AIProviderCatalog>('/v1/ai/providers'), $apiFetch<{connections: AIConnection[]}>('/v1/ai/connections')])
+    if (generation !== loadGeneration) return
+    catalog.value = p; connections.value = c.connections || []
+    if (props.initial.enabled && !contractChanged.value) acknowledged.value = Boolean(props.initial.acknowledged)
+    if (!props.initial.enabled) {
+      const preferred = connections.value.find(c => c.is_default && c.enabled && c.models?.some(m => m.validated))
+      if (preferred) { connectionID.value = preferred.id; modelID.value = preferredModel(preferred) }
+    }
+  } catch (e) { if (generation === loadGeneration) loadError.value = localizedError.message(e) }
+  finally { if (generation === loadGeneration) loading.value = false }
+}
+function chooseModel() { acknowledged.value = false; categories.value = categories.value.filter(categoryAvailable) }
+function chooseConnection() {
+  modelID.value = preferredModel(connection.value)
+  acknowledged.value = false
+  categories.value = categories.value.filter(categoryAvailable)
+}
+onBeforeUnmount(() => { loadGeneration++ })
 const privacyURL = ref('')
 const categories = ref<AIInputCategory[]>([])
 const acknowledged = ref(false)
@@ -27,26 +69,33 @@ const contractChanged = computed(() => {
   return stored.length !== selected.length
     || stored.some((category, index) => category !== selected[index])
     || (props.initial.privacy_policy_url || '') !== privacyURL.value.trim()
+    || (props.initial.connection_id || 'managed') !== connectionID.value
+    || (props.initial.billing_mode === 'customer' && (props.initial.model !== modelID.value || props.initial.config_version !== connection.value?.config_version))
 })
 
 const valid = computed(() =>
-  categories.value.length > 0 && acknowledged.value && validPrivacyURL(privacyURL.value),
+  selectionValid.value && categories.value.every(categoryAvailable) && categories.value.length > 0 && acknowledged.value && validPrivacyURL(privacyURL.value),
 )
 
 const blockedReason = computed(() => {
   if (valid.value) return ''
+  if (!selectionValid.value || !categories.value.every(categoryAvailable)) return t('aiProviders.selectModel')
   if (categories.value.length === 0) return t('projects.editor.ai.selectContent')
   if (!validPrivacyURL(privacyURL.value)) return t('projects.editor.ai.privacyURLInvalid')
   return t('projects.editor.ai.acknowledgmentRequired')
 })
 
 watch(() => props.open, (open) => {
-  if (!open) return
+  if (!open) { loadGeneration++; return }
+  connectionID.value = props.initial.connection_id || 'managed'
+  modelID.value = props.initial.model || ''
+  loadError.value = ''
+  void loadChoices()
   privacyURL.value = props.initial.privacy_policy_url || props.defaultPrivacyUrl || ''
   categories.value = props.initial.enabled
     ? [...(props.initial.input_categories || [])]
     : ['feedback_text']
-  categories.value = categories.value.filter(category => categoryAvailable(category))
+  categories.value = categories.value.filter(category => category === 'feedback_text' || (category === 'screenshot' ? props.screenshot : category === 'audio' ? props.audio : props.video))
   if (categories.value.length === 0) categories.value = ['feedback_text']
   // A configuration that is already acknowledged stays acknowledged while it is unchanged, the
   // same rule the API applies when it decides whether to re-stamp the acknowledgement. Reopening
@@ -57,11 +106,14 @@ watch(() => props.open, (open) => {
 
 // Changing what is sent to the provider is a new authorization, so a stored confirmation stops
 // counting for the changed contract and has to be given again.
-watch(contractChanged, (changed) => {
-  if (changed) acknowledged.value = false
+watch(() => JSON.stringify([privacyURL.value, categories.value, connectionID.value, modelID.value]), () => {
+  if (contractChanged.value) acknowledged.value = false
 })
 
+const categoryHints = computed(() => Object.fromEntries((['feedback_text', 'screenshot', 'audio', 'video'] as AIInputCategory[]).map(category => [category, categoryAvailable(category) ? undefined : t('aiProviders.unsupported')])))
+function preferredModel(c?: AIConnection) { const valid = c?.models?.filter(m => m.validated) || []; return valid.find(m => m.id === c?.default_model)?.id || valid[0]?.id || '' }
 function categoryAvailable(category: AIInputCategory) {
+  if (connectionID.value !== 'managed' && !selectedModel.value?.input_categories.includes(category)) return false
   if (category === 'feedback_text') return true
   if (category === 'screenshot') return props.screenshot
   if (category === 'audio') return props.audio
@@ -87,8 +139,9 @@ function confirm() {
   if (!valid.value) return
   emit('confirm', {
     enabled: true,
-    policy_version: '2026-07-24',
-    provider: 'google_gemini',
+    policy_version: connectionID.value === 'managed' ? '2026-07-24' : '2026-10-02',
+    provider: connectionID.value === 'managed' ? 'google_gemini' : connection.value!.provider,
+    ...(connectionID.value !== 'managed' ? { billing_mode: 'customer' as const, connection_id: connection.value!.id, config_version: connection.value!.config_version, model: modelID.value } : {}),
     purposes: ['transcription', 'cleanup', 'moderation', 'sentiment', 'triage_recommendations'],
     input_categories: [...categories.value],
     privacy_policy_url: privacyURL.value.trim(),
@@ -117,17 +170,30 @@ function confirm() {
       </header>
 
       <div class="app-modal__body ai-processing-body">
+        <p v-if="loading" role="status">{{ t('aiProviders.loading') }}</p>
+        <p v-if="loadError" role="alert">{{ loadError }} <button class="app-button" @click="loadChoices">{{ t('aiProviders.retry') }}</button></p>
+        <label>{{ t('aiProviders.selectConnection') }}
+          <select v-model="connectionID" class="app-select" :disabled="loading" @change="chooseConnection">
+            <option v-if="catalog?.managed.available !== false" value="managed">{{ t('aiProviders.managed') }}</option>
+            <option v-for="c in connections" :key="c.id" :value="c.id" :disabled="!c.enabled || !c.models?.length">{{ c.name }}</option>
+          </select>
+        </label>
+        <label v-if="connectionID !== 'managed'">{{ t('aiProviders.model') }}
+          <select v-model="modelID" :aria-label="t('aiProviders.model')" class="app-select" @change="chooseModel"><option value="" disabled>{{ t('aiProviders.selectModel') }}</option><option v-for="m in models" :key="m.id" :value="m.id">{{ m.name || m.id }}</option></select>
+          <small>{{ t('aiProviders.customer') }}</small>
+        </label>
+        <NuxtLink v-if="can('ai_connection:read')" to="/settings?tab=ai">{{ t('aiProviders.setup') }}</NuxtLink>
         <div class="ai-processing-note" role="note">
           <ShieldCheck :size="18" />
-          <p><b>{{ t('projects.editor.ai.providerTitle') }}</b><span>{{ t('projects.editor.ai.providerDescription') }}</span></p>
+          <p><b>{{ t('projects.editor.ai.providerTitle', { provider: providerLabel }) }}</b><span>{{ t('projects.editor.ai.providerDescription', { provider: providerLabel }) }}</span></p>
         </div>
 
         <fieldset>
           <legend>{{ t('projects.editor.ai.inputTitle') }}</legend>
-          <label><input data-ai-category type="checkbox" :checked="categories.includes('feedback_text')" @change="toggleCategory('feedback_text', ($event.target as HTMLInputElement).checked)" /> {{ t('projects.editor.ai.inputs.feedback_text') }}</label>
-          <label v-if="screenshot"><input type="checkbox" :checked="categories.includes('screenshot')" @change="toggleCategory('screenshot', ($event.target as HTMLInputElement).checked)" /> {{ t('projects.editor.ai.inputs.screenshot') }}</label>
-          <label v-if="audio"><input type="checkbox" :checked="categories.includes('audio')" @change="toggleCategory('audio', ($event.target as HTMLInputElement).checked)" /> {{ t('projects.editor.ai.inputs.audio') }}</label>
-          <label v-if="video"><input type="checkbox" :checked="categories.includes('video')" @change="toggleCategory('video', ($event.target as HTMLInputElement).checked)" /> {{ t('projects.editor.ai.inputs.video') }}</label>
+          <label><input data-ai-category type="checkbox" :checked="categories.includes('feedback_text')" :disabled="!categoryAvailable('feedback_text')" :title="categoryHints.feedback_text" @change="toggleCategory('feedback_text', ($event.target as HTMLInputElement).checked)" /> {{ t('projects.editor.ai.inputs.feedback_text') }}</label>
+          <label v-if="screenshot"><input type="checkbox" :checked="categories.includes('screenshot')" :disabled="!categoryAvailable('screenshot')" :title="categoryHints.screenshot" @change="toggleCategory('screenshot', ($event.target as HTMLInputElement).checked)" /> {{ t('projects.editor.ai.inputs.screenshot') }}</label>
+          <label v-if="audio"><input type="checkbox" :checked="categories.includes('audio')" :disabled="!categoryAvailable('audio')" :title="categoryHints.audio" @change="toggleCategory('audio', ($event.target as HTMLInputElement).checked)" /> {{ t('projects.editor.ai.inputs.audio') }}</label>
+          <label v-if="video"><input type="checkbox" :checked="categories.includes('video')" :disabled="!categoryAvailable('video')" :title="categoryHints.video" @change="toggleCategory('video', ($event.target as HTMLInputElement).checked)" /> {{ t('projects.editor.ai.inputs.video') }}</label>
         </fieldset>
 
         <label>
@@ -142,7 +208,7 @@ function confirm() {
 
         <label class="ai-processing-acknowledgment">
           <input v-model="acknowledged" type="checkbox" />
-          <span>{{ t('projects.editor.ai.acknowledgment') }}</span>
+          <span>{{ t('projects.editor.ai.acknowledgment', { provider: providerLabel }) }}</span>
         </label>
       </div>
 

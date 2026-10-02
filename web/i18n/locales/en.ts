@@ -1,3 +1,4 @@
+import { aiProviderMessages } from '../messages/ai-providers.en'
 import { chatMessages } from '../messages/chat.en'
 import { feedbackMessages } from '../messages/feedback.en'
 import { adminMessages } from '../messages/admin.en'
@@ -5,6 +6,7 @@ import { replayMessages } from '../messages/replays.en'
 import { supportMessages } from '../messages/support.en'
 
 export const englishMessages = {
+  aiProviders: aiProviderMessages,
   support: supportMessages,
   chat: chatMessages,
   common: {
@@ -903,13 +905,13 @@ export const englishMessages = {
       },
       ai: {
         title: 'AI analysis',
-        toggle: 'Enable Gemini analysis',
+        toggle: 'Enable AI analysis',
         toggleHint: 'Advisory transcription, cleanup and triage',
         review: 'Review AI processing',
         eyebrow: 'AI governance',
         dialogTitle: 'Enable AI analysis',
-        providerTitle: 'Google Gemini processor',
-        providerDescription: 'Selected content is sent to Google Gemini for advisory transcription, cleanup, moderation, sentiment and triage recommendations. Temporary provider files are deleted after processing.',
+        providerTitle: '{provider} processor',
+        providerDescription: 'Selected content is sent to {provider} for advisory transcription, cleanup, moderation, sentiment and triage recommendations. Temporary provider files are deleted after processing.',
         inputTitle: 'Content allowed for processing',
         inputs: {
           feedback_text: 'Feedback text',
@@ -922,7 +924,7 @@ export const englishMessages = {
         policyDescription: 'Fidibeki minimizes input and redacts detected sensitive data. Unsafe results are quarantined instead of being applied.',
         advisoryTitle: 'Recommendations remain advisory',
         advisoryDescription: 'AI does not create issues or take workflow actions automatically.',
-        acknowledgment: 'I confirm that this workspace is authorized to send the selected content to Google Gemini, has updated its privacy notice, and accepts responsibility for lawful collection and use.',
+        acknowledgment: 'I confirm that this workspace is authorized to send the selected content to {provider}, has updated its privacy notice, and accepts responsibility for lawful collection and use.',
         acknowledgmentRequired: 'Confirm the authorization above to continue.',
         selectContent: 'Select at least one type of content to process.',
         privacyURLInvalid: 'Enter the customer privacy notice as an HTTPS URL.',

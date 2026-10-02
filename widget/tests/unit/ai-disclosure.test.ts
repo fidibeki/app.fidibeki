@@ -18,13 +18,14 @@ const configuration: WidgetConfiguration = {
   refresh_after_seconds: 300,
 }
 
-function mount(aiEnabled: boolean) {
+function mount(aiEnabled: boolean, providerLabel?: string) {
   const candidate = rule({
     can_rate: false,
     ai_processing: aiEnabled
       ? {
           enabled: true,
-          provider: 'google_gemini',
+          provider: providerLabel ? 'openai' : 'google_gemini',
+          ...(providerLabel ? { provider_label: providerLabel } : {}),
           input_categories: ['feedback_text'],
           privacy_policy_url: 'https://customer.example/privacy',
           policy_version: '2026-07-24',
@@ -63,6 +64,13 @@ describe('AI processing disclosure', () => {
     const privacy = shadow.querySelector<HTMLAnchorElement>('[data-copy="ai-privacy-link"]')
     expect(privacy?.href).toBe('https://customer.example/privacy')
     expect(privacy?.rel).toContain('noopener')
+    destroy()
+  })
+
+  it('names the customer provider and renders the label as text', () => {
+    const { destroy, shadow } = mount(true, 'OpenAI <em>customer</em>')
+    expect(shadow.querySelector('[data-copy="ai-disclosure"]')?.textContent).toContain('OpenAI <em>customer</em>')
+    expect(shadow.querySelector('[data-copy="ai-disclosure"] em')).toBeNull()
     destroy()
   })
 

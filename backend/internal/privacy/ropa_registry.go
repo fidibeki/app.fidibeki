@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-const ropaRegistryVersion = 1
+const ropaRegistryVersion = 2
 
 const (
 	maxROPAClassifications  = 8
@@ -426,7 +426,7 @@ func processingActivityRegistry() []ProcessingActivityRecord {
 			Role:                RetentionRoleProcessor,
 			DataSubjects:        []ROPADataSubjectClass{ROPADataSubjectReporters, ROPADataSubjectThirdParties},
 			DataCategories:      []ROPADataCategoryClass{ROPADataCategoryContentCommunications, ROPADataCategoryMediaEvidence},
-			RetentionCategories: []string{"ai_provider_files", "ai_processing"},
+			RetentionCategories: []string{"ai_provider_files", "ai_processing", "customer_ai_processing"},
 			SecurityControls: []string{
 				"Deterministic pre/post redaction with quarantine of unsafe output (docs/ai-provider-assessment.md)",
 				"Immediate provider file deletion with retry ledger",

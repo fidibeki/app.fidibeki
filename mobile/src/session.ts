@@ -300,7 +300,7 @@ export function validateCaptureSession(value: unknown): MobileCaptureSession {
     }
     rejectUnknownKeys(
       ai,
-      ['enabled', 'provider', 'privacy_policy_url', 'policy_version', 'input_categories'],
+      ['enabled', 'provider', 'provider_label', 'privacy_policy_url', 'policy_version', 'input_categories'],
       'AI disclosure',
     )
     if (
@@ -315,6 +315,7 @@ export function validateCaptureSession(value: unknown): MobileCaptureSession {
     ) {
       invalidSession('incomplete AI disclosure')
     }
+    if (ai.provider_label !== undefined && !isNonEmptyString(ai.provider_label)) invalidSession('invalid AI provider label')
     if (ai.enabled) {
       validateHTTPSURL(ai.privacy_policy_url as string, 'AI privacy policy')
     }

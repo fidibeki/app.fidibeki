@@ -10,7 +10,7 @@ import (
 	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
 )
 
-const retentionRegistryVersion = 1
+const retentionRegistryVersion = 2
 
 type retentionDurationKind string
 
@@ -53,7 +53,7 @@ func retentionRegistry() []retentionDefinition {
 			Role:    RetentionRoleProcessor, Status: RetentionEnforced,
 			DurationKind: retentionDurationFixed, Duration: "180 days after the last message; unused credentials 24 hours after expiry", DurationDays: days(180),
 			Source: "Product default", Trigger: "Last message timestamp or unused credential expiry.",
-			Action:  "Delete visitor credentials and messages; project and workspace deletion cascade.",
+			Action:  "Delete visitor credentials, messages and their issue links; project and workspace deletion cascade.",
 			Cadence: "Daily", HoldBehavior: RetentionHoldCaseScoped, Implementation: "websitechat.Maintainer",
 			Resources: combine(tables("website_chat_visitors", "website_chat_messages", "website_chat_issue_links"), resource(RetentionDatabaseScope, "retention_maintenance_status:website_chat_conversations")),
 		},
@@ -345,9 +345,22 @@ func retentionRegistry() []retentionDefinition {
 			Resources: combine(
 				tables(
 					"ai_daily_usage", "ai_processing_runs", "ai_project_daily_usage",
-					"ai_work_reservations",
+					"ai_work_reservations", "ai_connections", "ai_connection_credentials", "ai_connection_models",
 				),
 				resource(RetentionDatabaseScope, "retention_maintenance_status:ai_budget_ledgers"),
+			),
+		},
+		{
+			Category: "customer_ai_processing", Label: "Customer AI provider processing",
+			Purpose: "Process authorized feedback with a customer-selected AI account and model.",
+			Role:    "processor", Status: RetentionExternalControl,
+			DurationKind: retentionDurationExternal, Duration: "Controlled by the customer's provider account and contract",
+			Source: "Customer-selected provider", Trigger: "Authorized AI inference or synthetic model validation.",
+			Action:  "Customer configures provider retention; no persistent remote files are created by these adapters.",
+			Cadence: "Provider controlled", HoldBehavior: RetentionHoldNotApplicable,
+			Resources: combine(
+				resource(RetentionProvider, "openai_api"), resource(RetentionProvider, "anthropic_api"),
+				resource(RetentionProvider, "amazon_bedrock_api"), resource(RetentionProvider, "customer_ai_endpoint"),
 			),
 		},
 		{
@@ -547,6 +560,7 @@ func retentionRegistry() []retentionDefinition {
 				retentionResource{Kind: RetentionQueue, Name: "replay-pool"},
 				retentionResource{Kind: RetentionQueue, Name: "privacy-pool"},
 				retentionResource{Kind: RetentionQueue, Name: "ai-pool"},
+				retentionResource{Kind: RetentionQueue, Name: "ai-pool-v2"},
 				retentionResource{Kind: RetentionProvider, Name: "postgresql_runtime"},
 				retentionResource{Kind: RetentionProvider, Name: "redis_asynq"},
 				retentionResource{Kind: RetentionProvider, Name: "s3_compatible_object_storage"},

@@ -201,6 +201,11 @@ const (
 )
 
 type AIProcessingConfig struct {
+	BillingMode            string            `json:"billing_mode,omitempty"`
+	ConnectionID           string            `json:"connection_id,omitempty"`
+	ConfigVersion          int64             `json:"config_version,omitempty"`
+	Model                  string            `json:"model,omitempty"`
+	ProviderLabel          string            `json:"provider_label,omitempty"`
 	Enabled                bool              `json:"enabled"`
 	PolicyVersion          string            `json:"policy_version,omitempty"`
 	Provider               string            `json:"provider,omitempty"`
