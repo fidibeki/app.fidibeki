@@ -39,4 +39,8 @@ Preserve the Fidibeki name and existing mark. The user chose OpenAI's marketing 
 
 ## Languages and discovery
 
-English is the unprefixed default; Portuguese, Spanish and French use `/pt`, `/es` and `/fr`. All 35 pages are available in all four languages, including documentation and policies. Use European Portuguese. Preserve pricing and product facts across translations. Each page has localized metadata, a canonical URL, reciprocal language links and a generated Markdown version. The curated `/llms.txt` links to those versions. These files support content discovery; they do not promise search rankings or AI citations.
+English is the unprefixed default; Portuguese, Spanish and French use `/pt`, `/es` and `/fr`. All 44 pages are available in all four languages, including documentation and policies. Use European Portuguese. Preserve pricing and product facts across translations. Each page has localized metadata, a canonical URL, reciprocal language links and a generated Markdown version. The curated `/llms.txt` links to those versions. These files support content discovery; they do not promise search rankings or AI citations.
+
+## Comparison pages
+
+The user requested four named alternatives and four genuine versus pages for Marker.io, Userback, BugHerd and Canny, and authorized completing and publishing this SEO work. `/compare` connects the eight guides. Alternatives explain fit and switching; versus pages compare the same tasks, with distinct scenarios for each competitor. Competitor facts come from official product and pricing pages checked on 2 October 2026. They are documented comparisons, not hands-on benchmarks. Keep sources, billing cadence, free plans and Fidibeki limitations explicit.

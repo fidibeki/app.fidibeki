@@ -3,6 +3,7 @@ const { copy } = useMarketingI18n()
 
 import { Check } from '@lucide/vue'
 import { featureBySlug, features } from '~/data/features'
+import { competitors, versusPath } from '~/data/comparisons'
 import { featurePhotography } from '~/data/photography'
 
 const route = useRoute()
@@ -16,6 +17,9 @@ if (!feature) {
   })
 }
 
+const comparisons = competitors.filter((entry) =>
+  entry.featureSlugs.includes(feature.slug),
+)
 const links = useAppLinks()
 
 const related = feature.related
@@ -86,6 +90,16 @@ useSiteMeta({
               <li v-for="entry in related" :key="entry.slug">
                 <NuxtLinkLocale :to="`/features/${entry.slug}`">{{
                   copy(entry.name)
+                }}</NuxtLinkLocale>
+              </li>
+            </ul>
+          </div>
+          <div v-if="comparisons.length" class="aside-section">
+            <h2 class="aside-heading">{{ copy('Compare tools') }}</h2>
+            <ul class="aside-related">
+              <li v-for="entry in comparisons" :key="entry.slug">
+                <NuxtLinkLocale :to="versusPath(entry.slug)">{{
+                  copy('Fidibeki vs {competitor}', { competitor: entry.name })
                 }}</NuxtLinkLocale>
               </li>
             </ul>

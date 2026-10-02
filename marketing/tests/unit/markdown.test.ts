@@ -24,4 +24,17 @@ describe('Markdown representations', () => {
       pageMarkdown('<html>Missing</html>', 'https://fidibeki.com'),
     ).toThrow('Missing main content')
   })
+  it('retains evidence links and accessible values inside comparison tables', () => {
+    const md = pageMarkdown(
+      '<main><table><tr><th>Tool</th><th>Evidence</th></tr><tr><td>Example</td><td>Published limits <a href="https://example.com/pricing">Source <svg aria-hidden="true"></svg></a></td></tr><tr><td>Fidibeki</td><td><a href="/pricing">Plans</a></td></tr></table></main>',
+      'https://fidibeki.com/compare',
+      new Set(['/pricing']),
+    )
+    expect(md).toContain(
+      '| Example | Published limits [Source](https://example.com/pricing) |',
+    )
+    expect(md).toContain(
+      '| Fidibeki | [Plans](https://fidibeki.com/pricing.md) |',
+    )
+  })
 })

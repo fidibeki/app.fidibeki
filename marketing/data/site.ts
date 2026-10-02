@@ -2,6 +2,7 @@ import { featureSlugs } from './features'
 import { integrationSlugs } from './integrations'
 import { useCaseSlugs } from './use-cases'
 import { docSlugs } from './docs'
+import { comparisonRoutes } from './comparisons'
 
 export const siteName = 'Fidibeki'
 
@@ -103,6 +104,7 @@ export const footerGroups = [
       { label: 'Integrations', to: '/integrations' },
       { label: 'Pricing', to: '/pricing' },
       { label: 'Use cases', to: '/use-cases' },
+      { label: 'Compare', to: '/compare' },
     ],
   },
   {
@@ -137,6 +139,8 @@ export const footerGroups = [
  */
 export const marketingRoutes: string[] = [
   '/',
+  '/compare',
+  ...comparisonRoutes,
   '/features',
   ...featureSlugs.map((slug) => `/features/${slug}`),
   '/integrations',

@@ -14,6 +14,14 @@ The linked Markdown pages are generated from the same published content as the w
 - [Use cases](https://fidibeki.com/use-cases.md): Engineering, product, support, and research workflows.
 - [Integrations](https://fidibeki.com/integrations.md): Jira, Linear, Slack, Microsoft Teams, and signed webhooks.
 
+## Comparisons
+
+- [Compare feedback tools](https://fidibeki.com/compare.md): Comparison directory and switching guides.
+- [Fidibeki vs Marker.io](https://fidibeki.com/fidibeki-vs-marker-io.md): Website reports, visual QA, replay and plan limits.
+- [Fidibeki vs Userback](https://fidibeki.com/fidibeki-vs-userback.md): Feedback, annotation, portals and replay.
+- [Fidibeki vs BugHerd](https://fidibeki.com/fidibeki-vs-bugherd.md): Live product feedback and client design review.
+- [Fidibeki vs Canny](https://fidibeki.com/fidibeki-vs-canny.md): Private reports, public voting and roadmaps.
+
 ## Documentation
 
 - [Documentation overview](https://fidibeki.com/docs.md): Installation and configuration guides.

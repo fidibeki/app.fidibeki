@@ -52,9 +52,7 @@ const links = useAppLinks()
       </nav>
     </div>
     <div class="home-footer-bottom">
-      <span
-        >© {{ copy(new Date().getFullYear()) }} {{ copy('Fidibeki') }}</span
-      >
+      <span>© {{ new Date().getFullYear() }} {{ copy('Fidibeki') }}</span>
       <a href="mailto:support@fidibeki.com">{{ copy('Get in touch') }}</a>
       <a
         href="https://www.producthunt.com/products/fidibeki"

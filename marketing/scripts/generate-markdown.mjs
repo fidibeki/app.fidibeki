@@ -63,7 +63,11 @@ export function pageMarkdown(html, canonical, routes = new Set()) {
     replacement: (_, node) => {
       const rows = Array.from(node.querySelectorAll('tr')).map((row) =>
         Array.from(row.querySelectorAll('th,td')).map((cell) =>
-          cell.textContent.trim().replace(/\s+/g, ' ').replace(/\|/g, '\\|'),
+          converter
+            .turndown(cell.innerHTML)
+            .trim()
+            .replace(/\s+/g, ' ')
+            .replace(/\|/g, '\\|'),
         ),
       )
       if (!rows.length) return ''

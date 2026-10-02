@@ -21,7 +21,7 @@ pnpm typecheck:marketing
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `NUXT_PUBLIC_SITE_URL` | `https://fidibeki.com` | Canonical origin used for metadata and the sitemap. |
-| `NUXT_PUBLIC_APP_URL` | `https://fidibeki.com` | Where sign-in (`/login`) and sign-up (`/signup`) link. The app currently serves signup on the base domain; point this elsewhere if the app moves. |
+| `NUXT_PUBLIC_APP_URL` | `https://fidibeki.com` | Where sign-in (`/login`) and sign-up (`/signup`) link. Production sets this to `https://app.fidibeki.com`; configure it explicitly for other environments. |
 | `NUXT_PUBLIC_DEMO_SCHEDULER_URL` | `https://cal.eu/acidiney.dias-fidibeki/30min` | External scheduling link — every "Book a demo" button opens it directly in a new tab. |
 | `NUXT_PUBLIC_UMAMI_SCRIPT_URL` | `https://cloud.umami.is/script.js` | Umami analytics script location. |
 | `NUXT_PUBLIC_UMAMI_WEBSITE_ID` | `1d518b00-…` | Umami website id. Analytics load only after the visitor accepts the consent banner; set empty to disable entirely. |
@@ -42,6 +42,8 @@ All page content is repository-backed TypeScript in `data/`:
 
 - `features.ts`, `integrations.ts`, `use-cases.ts`, `docs.ts` drive the extensible
   `/features/*`, `/integrations/*`, `/use-cases/*`, and `/docs/*` routes.
+- `comparisons.ts` supplies the four alternative guides and four versus pages, linked from
+  `/compare`. Review official competitor sources before changing facts or prices.
 - `pricing.ts` mirrors `backend/internal/config/plans.go`. A unit test
   (`tests/unit/pricing-sync.test.ts`) parses the Go plan catalog and fails if the two drift —
   never edit one without the other.
@@ -81,6 +83,18 @@ Lighthouse 12, mobile emulation, against the compressed static build:
 - Caddy configuration and local HTTP checks passed for localized routes, Markdown
   content types, the discovery index, health checks and genuine 404 responses.
 
+## Comparison-page validation (2026-10-02)
+
+- 89 unit tests, Nuxt type checking and the static build passed.
+- 44 routes produce 176 localized HTML pages and 176 Markdown pages.
+- Playwright passed 138 tests with 12 intentional viewport-specific skips. The new
+  suite checks distinct alternative/versus content, live route and locale changes,
+  citations, billing periods, free plans and 320–1440px layouts in both themes.
+- Markdown table cells preserve source links. The full localized metadata and
+  Markdown suite passed after this correction.
+- Competitor sources and review dates live in `data/comparisons.ts`. See `SEO.md`
+  for the intent map, maintenance schedule and measurement work that needs Search Console data.
+
 ## Notes for the founder
 
 - Prices, limits, and feature gates shown on `/pricing` come from the backend plan catalog
@@ -91,7 +105,7 @@ Lighthouse 12, mobile emulation, against the compressed static build:
 
 ## Languages and SEO
 
-`@nuxtjs/i18n` publishes 35 routes in four languages: English at the original URLs,
+`@nuxtjs/i18n` publishes 44 routes in four languages: English at the original URLs,
 European Portuguese under `/pt`, Spanish under `/es`, and French under `/fr`. The
 language selector keeps the route, query and anchor and remembers the choice in
 `fidibeki-locale`.
@@ -105,7 +119,7 @@ quantities through `copy(number)`. Keep code samples and user-entered content in
 `useSiteMeta()` supplies translated titles, descriptions, social metadata, structured
 data, canonical URLs and Markdown discovery links. Pass a function when the options
 themselves contain reactive translated values. Locale-aware head links supply
-reciprocal `hreflang` entries, including `x-default`. The sitemap lists all 140 pages.
+reciprocal `hreflang` entries, including `x-default`. The sitemap lists all 176 pages.
 
 After prerendering, `scripts/generate-markdown.mjs` extracts page content from the
 rendered HTML and writes matching `.md` files, including `/index.md` and localized
