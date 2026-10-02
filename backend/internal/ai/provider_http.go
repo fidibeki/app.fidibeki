@@ -77,7 +77,7 @@ func (p *providerHTTP) request(ctx context.Context, method, endpoint string, pay
 		}
 		return &aiprovider.Failure{Code: "network_error", Retryable: true}
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	data, err := io.ReadAll(io.LimitReader(response.Body, maxProviderResponse+1))
 	if err != nil {
 		return &aiprovider.Failure{Code: "network_error", Retryable: true}
@@ -178,7 +178,7 @@ func portableSchema() map[string]any {
 
 func (p *providerHTTP) generate(ctx context.Context, prompt string, image []byte, mime string) (Result, error) {
 	var raw, model string
-	usage := Usage{}
+	var usage Usage
 	switch p.connection.Provider {
 	case aiprovider.Anthropic, aiprovider.CustomAnthropic:
 		content := []any{map[string]any{"type": "text", "text": prompt}}

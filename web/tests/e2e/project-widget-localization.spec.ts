@@ -1,4 +1,5 @@
 import { expect, test, type Page, type Route } from '@playwright/test'
+import { mockSupportRequest } from './support-fixture'
 import { allTenantPermissions } from '../../data/permissions'
 
 const tenantOrigin = `http://loja.localhost:${process.env.PLAYWRIGHT_PORT || '4321'}`
@@ -176,6 +177,7 @@ function resolveProject(state: Captured, id: string) {
 
 async function installAPI(page: Page, state: Captured) {
   await page.route(/^https?:\/\/[^/]+\/(?:auth|v1)\//, async (route) => {
+    if (await mockSupportRequest(route)) return
     const request = route.request()
     if (request.resourceType() === 'document') return route.continue()
     const url = new URL(request.url())

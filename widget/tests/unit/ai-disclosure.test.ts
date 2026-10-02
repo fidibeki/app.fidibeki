@@ -25,7 +25,7 @@ function mount(aiEnabled: boolean, providerLabel?: string) {
       ? {
           enabled: true,
           provider: providerLabel ? 'openai' : 'google_gemini',
-          provider_label: providerLabel,
+          ...(providerLabel ? { provider_label: providerLabel } : {}),
           input_categories: ['feedback_text'],
           privacy_policy_url: 'https://customer.example/privacy',
           policy_version: '2026-07-24',

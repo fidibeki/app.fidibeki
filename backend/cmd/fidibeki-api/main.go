@@ -1024,7 +1024,6 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 	}
 	aiFactory.Ledger = aiStore
 	var analyzer aiprocessing.Analyzer = aiprocessing.UnavailableAnalyzer{}
-	fileDeleteHandler := aiprocessing.UnavailableFileDeleteHandler(aiStore)
 	if aiFactory.ManagedKey != "" {
 		geminiAnalyzer, analyzerErr := aiprocessing.NewGeminiAnalyzer(
 			ctx, aiFactory.ManagedKey, settings.GeminiModel, aiStore, logger,
@@ -1034,11 +1033,10 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 			return err
 		}
 		analyzer = geminiAnalyzer
-		fileDeleteHandler = geminiAnalyzer.FileDeleteHandler(aiStore)
 	} else {
 		logger.Warn("Gemini API key is not configured; AI tasks will remain retryable")
 	}
-	fileDeleteHandler = aiFactory.FileDeleteHandler()
+	fileDeleteHandler := aiFactory.FileDeleteHandler()
 	processor := aiprocessing.Processor{
 		Factory: aiFactory, Leaser: aiprocessing.RedisConnectionLeaser{Client: redisClient.Client()},
 		Store: aiStore, Analyzer: analyzer, Storage: objectStorage,

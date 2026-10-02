@@ -94,7 +94,7 @@ func (q *Queue) Enqueue(ctx context.Context, prepared PreparedTask) error {
 
 func (q *Queue) Close() error {
 	if q.legacy != nil {
-		defer q.legacy.Close()
+		defer func() { _ = q.legacy.Close() }()
 	}
 	if err := q.client.Close(); err != nil {
 		return fmt.Errorf("close AI queue: %w", err)

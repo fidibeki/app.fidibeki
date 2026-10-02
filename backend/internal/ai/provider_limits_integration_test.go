@@ -30,7 +30,7 @@ func TestConnectionConcurrencyIsIsolatedAndReleased(t *testing.T) {
 		t.Fatal(err)
 	}
 	client := redis.NewClient(&redis.Options{Addr: fmt.Sprintf("%s:%s", host, port.Port())})
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 	leaser := RedisConnectionLeaser{Client: client}
 	release, err := leaser.Acquire(ctx, "tenant-a:connection-a", 1)
 	if err != nil {

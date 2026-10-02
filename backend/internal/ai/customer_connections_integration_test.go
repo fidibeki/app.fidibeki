@@ -32,7 +32,7 @@ func TestCustomerConnectionsPinWorkAndPreserveCleanup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	input := aiprovider.Input{Name: "Customer Google", Provider: aiprovider.Google, Credential: "customer-secret-v1", Enabled: true, IsDefault: true}
 	c, err := cs.Create(ctx, tx, testTenantID, testMemberID, input)
 	if err != nil {
@@ -69,13 +69,15 @@ func TestCustomerConnectionsPinWorkAndPreserveCleanup(t *testing.T) {
 			t.Fatalf("RLS %s count=%d err=%v", table, count, err)
 		}
 	}
-	isolated.Rollback(ctx)
+	_ = isolated.Rollback(ctx)
 	var contract map[string]any
 	var raw []byte
 	if err = pool.QueryRow(ctx, `SELECT ai_processing FROM widget_rules WHERE id=$1`, testWidgetRuleID).Scan(&raw); err != nil {
 		t.Fatal(err)
 	}
-	json.Unmarshal(raw, &contract)
+	if err := json.Unmarshal(raw, &contract); err != nil {
+		t.Fatal(err)
+	}
 	contract["billing_mode"] = aiprovider.Customer
 	contract["connection_id"] = c.ID
 	contract["config_version"] = c.ConfigVersion

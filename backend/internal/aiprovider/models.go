@@ -161,15 +161,16 @@ func ValidateInput(input Input) (Input, error) {
 		if !regionPattern.MatchString(input.Region) {
 			return input, fmt.Errorf("%w: AWS region is required", ErrInvalid)
 		}
-		if input.AuthMode == "role" {
+		switch input.AuthMode {
+		case "role":
 			if !rolePattern.MatchString(input.RoleARN) {
 				return input, fmt.Errorf("%w: customer IAM role ARN is required", ErrInvalid)
 			}
-		} else if input.AuthMode == "api_key" {
+		case "api_key":
 			if input.CredentialExpiresAt == nil || (input.Enabled && !input.CredentialExpiresAt.After(time.Now())) {
 				return input, fmt.Errorf("%w: Bedrock pilot key expiry is required", ErrInvalid)
 			}
-		} else {
+		default:
 			return input, fmt.Errorf("%w: choose role or api_key authentication", ErrInvalid)
 		}
 	} else {

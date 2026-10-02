@@ -84,6 +84,7 @@ var governedNPMDependencies = map[string]map[string]dependencyClassification{
 		"dependencies:re2js":               {Class: dependencyApplication},
 		"dependencies:rrweb-player":        {Class: dependencyApplication},
 		"dependencies:vue":                 {Class: dependencyApplication},
+		"dependencies:vue-i18n":            {Class: dependencyApplication},
 		"devDependencies:@playwright/test": {Class: dependencyBuildTest},
 		"devDependencies:typescript":       {Class: dependencyBuildTest},
 		"devDependencies:vitest":           {Class: dependencyBuildTest},

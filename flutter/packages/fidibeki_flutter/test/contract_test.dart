@@ -63,7 +63,8 @@ void main() {
 
     test('accepts the customer provider label', () {
       final candidate = fixtureJson('session-valid.json');
-      unknownFieldTarget(candidate, 'ai_processing')['provider_label'] = 'OpenAI';
+      unknownFieldTarget(candidate, 'ai_processing')['provider_label'] =
+          'OpenAI';
       final session = FidibekiCaptureSession.fromJson(candidate);
       expect(
         session.configuration.definition.aiProcessing!.providerLabel,
