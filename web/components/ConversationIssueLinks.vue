@@ -93,7 +93,7 @@ defineExpose({ open, refresh })
   <AppDialog :open="Boolean(message)" initial-focus="#conversation-issue-title" :aria-label="t('chat.issues.track')" @close="close">
     <form class="conversation-issue-form" @submit.prevent="save">
       <header><h2>{{ t('chat.issues.track') }}</h2><button type="button" class="app-icon-button" :aria-label="t('common.close')" :disabled="pending" @click="close"><X :size="18" /></button></header>
-      <blockquote>{{ message?.body }}</blockquote>
+      <blockquote data-fidibeki-mask>{{ message?.body }}</blockquote>
       <p class="conversation-issue-hint">{{ t('chat.issues.privateHint') }}</p>
       <template v-if="current">
         <NuxtLink class="conversation-issue-current" :to="`/issues/${current.id}`">{{ current.public_id }} · {{ current.title }}</NuxtLink>
