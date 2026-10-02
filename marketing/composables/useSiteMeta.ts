@@ -1,3 +1,4 @@
+import socialPreview from '~/data/social-preview.json'
 import { siteName } from '~/data/site'
 import { localizedPath, markdownPath, marketingLocales } from '~/utils/locale'
 
@@ -23,6 +24,7 @@ export function useSiteMeta(source: SiteMetaOptions | (() => SiteMetaOptions)) {
     const options = typeof source === 'function' ? source() : source
     const pagePath = localizedPath(options.path, locale.value)
     const canonical = `${siteUrl}${pagePath}`
+    const imageUrl = `${siteUrl}${socialPreview[locale.value as keyof typeof socialPreview] || socialPreview.en}`
     const fullTitle =
       options.path === '/'
         ? `${siteName} — ${copy(options.title)}`
@@ -86,7 +88,8 @@ export function useSiteMeta(source: SiteMetaOptions | (() => SiteMetaOptions)) {
         { property: 'og:url', content: canonical },
         { property: 'og:type', content: 'website' },
         { property: 'og:site_name', content: siteName },
-        { property: 'og:image', content: `${siteUrl}/og/og-card.png` },
+        { property: 'og:image', content: imageUrl },
+        { property: 'og:image:type', content: 'image/png' },
         { property: 'og:image:width', content: '1200' },
         { property: 'og:image:height', content: '630' },
         {
@@ -96,7 +99,7 @@ export function useSiteMeta(source: SiteMetaOptions | (() => SiteMetaOptions)) {
         { name: 'twitter:card', content: 'summary_large_image' },
         { name: 'twitter:title', content: fullTitle },
         { name: 'twitter:description', content: copy(options.description) },
-        { name: 'twitter:image', content: `${siteUrl}/og/og-card.png` },
+        { name: 'twitter:image', content: imageUrl },
         {
           name: 'twitter:image:alt',
           content: copy('Fidibeki: website feedback and conversations'),
