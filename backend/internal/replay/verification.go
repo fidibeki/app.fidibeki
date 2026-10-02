@@ -936,7 +936,7 @@ func validReplayMutationData(data map[string]any) bool {
 			// rrweb emits null when a text node's content is cleared; null carries no text.
 			if text["value"] != nil {
 				masked, textOK := text["value"].(string)
-				if !textOK || (!validReplayText(masked) && !(strings.Contains(masked, "{") && validReplayCSS(masked, false))) {
+				if !textOK || (!validReplayText(masked) && (!strings.Contains(masked, "{") || !validReplayCSS(masked, false))) {
 					return false
 				}
 			}
