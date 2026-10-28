@@ -1,273 +1,64 @@
 # Fidibeki
 
-Fidibeki is a multi-tenant feedback platform. The current foundation provides a Go API,
-PostgreSQL row-level tenant isolation, PgBouncer, Redis, S3-compatible local storage, Caddy,
-an embeddable feedback widget, transactional feedback ingestion, queued work, and real-container tests.
+Open-source infrastructure for collecting, triaging, and closing the loop on product feedback.
 
-This repository contains the application source, local-development configuration,
-and public technical documentation. Internal plans, production evidence, and
-customer or prospect records are intentionally excluded.
+Fidibeki combines an embeddable feedback widget, multi-tenant workspace, issue workflows, privacy controls, optional session replay, and integrations—so feedback becomes work a team can act on.
 
-## Contributing and security
+> This project is early-stage. APIs and configuration may evolve as the public release matures.
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development and pull-request guidance.
-Report vulnerabilities using the private process in [SECURITY.md](SECURITY.md),
-not through public issues.
+## What’s included
 
-## License
+- Go API with PostgreSQL row-level tenant isolation
+- Embeddable JavaScript widget and React Native capture SDK
+- Nuxt workspace, backoffice, and marketing applications
+- Redis/Asynq background work and S3-compatible attachment storage
+- Feedback, issue, notification, privacy, SAML, billing, and integration workflows
 
-Fidibeki is licensed under the [GNU Affero General Public License v3.0](LICENSE).
-If you modify and run the software for users over a network, AGPL-3.0 requires
-you to offer those users the corresponding source code.
+## Quick start
 
-## Prerequisites
+### Prerequisites
 
 - Docker with Compose v2
-- Go 1.25.12 when running the API or tests outside Docker
-- Node.js 24 and pnpm 11.15.1 for widget development
+- Node.js 24 and pnpm 11.15.1 for frontend work
+- Go 1.25.12 for backend work outside Docker
 
-## Run locally
-
-Start the full stack:
+Start the local stack:
 
 ```sh
 docker compose -f infra/docker-compose.yml up -d --build
-```
-
-The migration container runs before the API starts. Services are available at:
-
-| Service | URL |
-| --- | --- |
-| API through Caddy | http://localhost:8088 |
-| Widget API/assets | http://widget.localhost:8088 |
-| API directly | http://localhost:8080 |
-| MinIO console | http://localhost:9001 |
-| PostgreSQL | localhost:5433 |
-| PgBouncer | localhost:6432 |
-| Redis | localhost:6380 |
-
-Check the stack:
-
-```sh
 curl -i http://localhost:8088/healthz
-curl -i http://localhost:8088/readyz
-docker compose -f infra/docker-compose.yml ps
 ```
 
-Use `api.localhost:8088` for platform traffic and `<tenant>.localhost:8088` for tenant
-traffic. Health and readiness endpoints are available on every host. The development passwords
-in Compose and `.env.example` are local-only credentials.
+| Service | Local address |
+| --- | --- |
+| API via Caddy | `http://localhost:8088` |
+| Widget assets | `http://widget.localhost:8088` |
+| MinIO console | `http://localhost:9001` |
+| PostgreSQL | `localhost:5433` |
+| Redis | `localhost:6380` |
 
-Local authentication emails are captured as private JSON files in the `email-capture` Docker
-volume. Inspect the newest capture with:
+Create the first platform administrator:
 
 ```sh
-docker compose -f infra/docker-compose.yml exec worker sh -lc 'ls -t /var/lib/fidibeki-emails | head'
+docker compose -f infra/docker-compose.yml run --rm api admin bootstrap --email admin@example.test
 ```
 
-Create or promote the first platform administrator before using the admin API:
+Use `api.localhost:8088` for platform routes and `<tenant>.localhost:8088` for tenant routes. Compose and `.env.example` contain development-only credentials; never deploy them.
 
-```sh
-docker compose -f infra/docker-compose.yml run --rm api admin bootstrap --email admin@example.com
-```
+## Add the widget
 
-Platform authentication is served from `api.localhost:8088` under `/admin/auth/*`. Tenant-member
-authentication is served from `<tenant>.localhost:8088` under `/auth/*`. Both flows return a
-10-minute audience-bound access token and set a hashed, rotating 30-day refresh-token cookie.
-Concurrent refreshes from the same user-agent and IP have a 10-second rotation grace period so
-multiple browser tabs remain signed in. Retries return one HMAC-derived successor instead of creating
-additional sessions. Reuse outside that window, from a different fingerprint, or after the successor
-has rotated revokes that administrator or member's active session family.
-
-Request a platform magic link with `POST /admin/auth/login`, then open the captured or delivered
-link and confirm the sign-in. The confirmation sets separate short-lived, HTTP-only cookies scoped
-to the Asynq monitor at `http://api.localhost:8088/admin/queues/` and the read-only
-privacy-incident workspace at `http://api.localhost:8088/admin/operations/privacy-incidents`;
-merely previewing the email link does not consume its one-time token.
-
-Organizations can authenticate members through their own SAML 2.0 identity provider. SSO is
-per organization and disabled by default. Administrators with `tenant:update` configure it under
-`/v1/sso/saml` and in **Settings → Single sign-on**; the identity provider uses
-`https://<tenant>.<base-domain>/auth/sso/saml/metadata` and `.../acs`, both derived from
-`WEB_PUBLIC_BASE_URL` (default `PUBLIC_BASE_URL`) and `BASE_DOMAIN`. Required mode is refused
-until a test sign-in has succeeded and a signing certificate is currently valid, the workspace
-owner keeps an audited break-glass link, and SAML sessions are marked `authentication_method =
-saml` so they never receive a Fidibeki TOTP challenge. Required mode also disables the workspace
-two-factor control without deleting any existing enrolment. See
-[docs/saml-sso.md](docs/saml-sso.md) for setup, certificate rotation, and outage recovery.
-
-Authenticated platform administrators manage tenants under `/admin/tenants`. Authenticated tenant
-members can invite and manage members under `/auth/invite` and `/v1/members`; every route enforces
-its explicit permission and the tenant ID embedded in the JWT.
-
-Each organization sets a Fidibeki-managed two-factor policy of `optional` (the default) or
-`required` at `/v1/security/two-factor/policy`. Members enrol a TOTP authenticator at
-`/v1/security/two-factor/enroll` and `/v1/security/two-factor/confirm`, which returns ten one-time
-recovery codes exactly once; secrets are stored AES-256-GCM encrypted under
-`TWO_FACTOR_ENCRYPTION_KEY` and recovery codes only as SHA-256 hashes. An enrolled member's
-`/auth/verify` and `/auth/refresh` return `two_factor.status` instead of an access token until
-`POST /auth/2fa/challenge` accepts a code from the same refresh cookie. Under a required policy an
-unenrolled member is refused every workspace route with `403 two_factor_enrollment_required` — there
-is no grace period — while the enrolment routes stay reachable. Requiring the policy is refused
-unless the acting administrator is enrolled and still holds unused recovery codes, so the workspace
-always keeps one recoverable administrator. Administrators see enrolment status at
-`/v1/security/two-factor/compliance` and can reset a member at
-`/v1/members/{memberID}/two-factor/reset`, which revokes that member's sessions and forces
-re-enrolment; they can never read a secret or a recovery code. SAML sessions record
-`authentication_method = 'saml'` and are never challenged, because their assurance is delegated to
-the identity provider. Policy changes, enrolment, removal, recovery-code use, failed challenges, and
-administrative resets are recorded in `tenant_access_events`.
-
-Self-service signup is `POST http://api.localhost:8088/v1/signup`. It creates a 14-day trial and
-the first tenant admin, then queues a fragment-based magic link. Production and staging require
-Cloudflare Turnstile plus `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, and one Stripe Price ID in
-each of `STRIPE_PRICE_STARTER`, `STRIPE_PRICE_GROWTH`, and `STRIPE_PRICE_SCALE`, plus their yearly
-counterparts `STRIPE_PRICE_STARTER_YEARLY`, `STRIPE_PRICE_GROWTH_YEARLY`, and
-`STRIPE_PRICE_SCALE_YEARLY`. Configure the
-Stripe endpoint at `https://api.fidibeki.com/v1/billing/webhooks/stripe` for these six events:
-`checkout.session.completed`, `customer.subscription.created`, `customer.subscription.updated`,
-`customer.subscription.deleted`, `invoice.paid`, and `invoice.payment_failed`.
-
-Tenant billing admins use `/v1/billing/checkout` and `/v1/billing/portal`. Account deletion is
-scheduled through `/v1/billing/delete-account` after typing the tenant slug and can be cancelled at
-`/v1/billing/cancel-deletion` during the seven-day read-only grace period. The worker sends trial
-dunning mail daily, suspends expired unpaid trials, removes unverified signups after 24 hours, and
-executes due deletions only after Stripe cancellation and S3 prefix cleanup succeed. Platform
-administrator force-deletion uses the same audited executor without the grace period.
-
-Tenant issue workflows are available under `/v1/issues`. Members with the relevant issue
-permissions can list and inspect issues, change status with an optional internal comment, merge an
-issue into another issue in the same project, and undo a merge. Status changes append immutable
-`issue_updates` history and enqueue opted-in reporter mail without holding the API transaction open.
-
-Reporter email uses `updates@fidibeki.com`, includes a 90-day audience-bound unsubscribe link, and
-records every provider attempt in `delivery_logs`. In production, set `EMAIL_DRIVER=resend`,
-`RESEND_API_KEY`, and `RESEND_WEBHOOK_SECRET`; point the Resend webhook at
-`https://api.fidibeki.com/v1/webhooks/resend` for bounce and complaint handling.
-
-Members route their own optional notifications at `/settings/notifications`, backed by
-`GET`/`PATCH /v1/notification-preferences`. Assignments, mentions, comments, important Issue changes,
-and new-feedback summaries are each delivered immediately, in a daily or weekly digest, or not at
-all; defaults are low-noise and new feedback is summary-only, so no setting produces one email per
-submission. Digests use the member's timezone and chosen delivery window, are claimed per window in
-`member_digest_deliveries` so retries cannot duplicate or omit events, and are never sent empty.
-Every digest carries a signed one-click opt-out at `/v1/member-notifications/unsubscribe`.
-Authentication, security, account-deletion, and billing mail is separate and cannot be disabled
-there. See [docs/transactional-email.md](docs/transactional-email.md).
-
-Scale and Enterprise tenants can manage Slack, Teams, and generic webhook destinations at
-`/v1/integrations`. Each destination selects from `feedback.created`, `issue.created`,
-`issue.updated`, and `issue.resolved`; the outbox creates one deterministic
-`integration.deliver` task per subscribed destination. Generic webhook bodies include the stable
-delivery ID and are signed as `X-Fidibeki-Signature: sha256=<hex HMAC-SHA256>`. Webhook secrets are
-shown once, while secrets and custom headers are stored with AES-256-GCM under
-`INTEGRATION_ENCRYPTION_KEY`. Slack uses Block Kit and Teams uses MessageCard payloads. Every HTTP
-attempt is isolated, retried by Asynq, and recorded in `delivery_logs` without blocking feedback.
-
-The same tenants can connect Jira and Linear at `/v1/issue-trackers` to create an external issue
-from a Fidibeki issue. Both providers are disabled by default. An administrator with
-`integration:create` stores a credential with `PUT /v1/issue-trackers/{jira|linear}`, which is
-validated live before anything is written; `GET /v1/issue-trackers/{provider}/destinations` lists
-the Jira projects and issue types or the Linear teams and projects; and
-`PATCH /v1/issue-trackers/{provider}` selects a destination and switches the provider on, which is
-only accepted once the selection is verified against the provider. Credentials are encrypted with
-AES-256-GCM under `INTEGRATION_ENCRYPTION_KEY` and never leave the API.
-
-A provider that is enabled can also be switched to automatic creation with `auto_create`. Every
-`issue.created` outbox event then fans out one `issue-tracker:auto-create` task per opted-in
-provider, and the worker creates the copy in the background: the Fidibeki issue is never delayed
-or rolled back by a provider, a redelivered event converges on the same attempt, and a rejected
-credential is recorded for a member to fix and retry rather than retried for hours. Turning a
-provider off also stops automatic creation.
-
-Members with `issue:update` create the external copy with `POST /v1/issues/{issueID}/external`
-after reviewing the title, description, priority, and destination. The Fidibeki issue stays the
-source record: the attempt is written before the provider is called, an `idempotency_key` plus a
-partial unique index make a replayed or concurrent request converge on the same external issue, and
-a provider failure is stored with an actionable error and retried at
-`POST /v1/issues/{issueID}/external/{linkID}/retry`. Configuration changes appear in the
-workspace audit ledger and every creation attempt appears on the issue timeline.
-
-Project and widget configuration is available to authenticated tenant members under
-`/v1/projects` and `/v1/projects/{projectID}/widget-rules`. Project creation enforces the current
-plan's project limit. Allowed domains accept exact hosts and leading wildcards such as
-`*.preview.example.com`; widget rules return field-level `422` errors for invalid matcher,
-trigger, appearance, replay, or plan-gated settings.
-
-Embed the widget with the project public key:
+Create a project in the workspace, then add its public key to your site:
 
 ```html
 <script src="http://widget.localhost:8088/v1/loader.js"
         data-fidibeki-key="pk_live_..." async></script>
 ```
 
-The public widget API requires the project key and an allowed browser `Origin`. Feedback submission
-creates one independent Feedback record and its outbox event atomically, returns 10-minute presigned
-upload URLs, and verifies each attachment's one-time completion token, byte size, and MIME type
-through S3 HEAD. Redis applies both the 10/minute per-IP/project and 100/hour project ceilings and
-fails open if Redis is unavailable.
+The widget accepts requests only from configured allowed domains. See [mobile capture](docs/mobile-capture.md) for React Native integrations.
 
-React Native hosts use `@fidibeki/mobile` and native controls rather than embedding the web widget.
-A trusted customer backend mints a short-lived capture session with a Fidibeki API key restricted
-to `mobile_capture:create`; neither that API key nor another private credential belongs in the
-mobile bundle. See [docs/mobile-capture.md](docs/mobile-capture.md) for the trust boundary, request
-contract, consent behavior, screenshot upload, recurrence, and failure semantics.
+## Development
 
-Customer backends can request post-transaction feedback email through an explicitly activated
-campaign and a separate API key restricted to `email_feedback:send`. Opening the email is
-mutation-free; only an explicit form submission creates independent Feedback, with no automatic
-Issue or Testimonial. See [docs/email-feedback.md](docs/email-feedback.md) for configuration,
-idempotency, privacy boundaries, and the controlled staging checklist.
-
-Automatic definitions combine their compatible legacy trigger with a deterministic local objective
-policy. The policy uses active time, scroll depth, interaction counts, anonymous per-page visits,
-public document metadata, and optional boolean attributes on `<html>`:
-`data-fidibeki-engaged`, `data-fidibeki-content`, and `data-fidibeki-friction`. Values `true` and `1`
-activate a signal. The runtime never reads input values, private page text, network payloads, or a
-personal fingerprint. Launcher and inline presentations remain immediately available; reaction and
-prompt presentations require progressively stronger evidence.
-
-Replay-enabled rules lazy-load pinned `rrweb@2.1.1` before the feedback trigger. Recording uses the
-rule's session-level sampling and masking policy, continues across same-rule SPA navigation, and ends
-after 30 minutes, 50,000 events, five minutes idle, or `pagehide`. The widget uploads sequential
-50-event/~200 KB JSON batches through presigned S3 URLs. The domain worker merges completed batches
-into `replay.json`, deletes the temporary objects, and a daily cleanup removes sessions and objects
-past each plan's storage period. Tenant members with `session:read` fetch metadata at
-`GET /v1/sessions/{id}` and stream merged events through the authenticated, RLS-scoped
-`GET /v1/sessions/{id}/replay`; direct S3 playback URLs are never exposed.
-
-Growth, Scale, and Enterprise tenants get asynchronous Gemini processing for written feedback,
-screenshots, audio, and video. The worker streams completed media from object storage through the
-Gemini File API, requests schema-constrained JSON, deletes the temporary Gemini file, and stores
-cleaned text, transcription/OCR, sentiment, and flag-only moderation results. Session replays are
-never sent to Gemini. Uploaded Gemini filenames are recorded before analysis; deletion is
-retried inline, and the reconciler resumes unresolved cleanup from the database ledger. Configure
-production workers with:
-
-```sh
-GEMINI_API_KEY=...
-GEMINI_MODEL=gemini-2.5-flash
-GEMINI_RPM=15
-AI_QUEUE_CONCURRENCY=3
-DOMAIN_QUEUE_CONCURRENCY=4
-MEDIA_QUEUE_CONCURRENCY=2
-PRIVACY_QUEUE_CONCURRENCY=1
-AI_DAILY_REQUEST_LIMIT=5000
-AI_PROJECT_DAILY_REQUEST_LIMIT=2000
-```
-
-Without `GEMINI_API_KEY`, local AI jobs remain in Asynq's retry flow while feedback submission and
-uploads continue normally. Members with `feedback:update` can retry one completed attachment at
-`POST /v1/attachments/{id}/retry` or reset all AI passes with
-`POST /v1/feedbacks/{id}/reprocess`. A five-minute reconciler recovers completed uploads whose jobs
-were not queued.
-
-Stop the stack with `make down`. Add `-v` to the Compose command when you intentionally need to
-delete local database, Redis, and object-storage data.
-
-## Run outside Docker
-
-Start the infrastructure, create the backend environment file, run migrations, then start the API:
+Run the API outside Docker after starting its dependencies:
 
 ```sh
 docker compose -f infra/docker-compose.yml up -d postgres pgbouncer redis minio
@@ -276,34 +67,42 @@ make migrate-up
 cd backend && go run ./cmd/fidibeki-api serve
 ```
 
-Do not reuse the example credentials in a deployed environment.
-
-## Verification
+Useful checks:
 
 ```sh
-make test-short   # unit tests only; skips testcontainers
-make test         # all unit and integration tests
-make coverage     # all tests plus 80% total / 60% per-package gates
-make format-check
-make lint         # go vet
-make widget-build
-make widget-test  # typecheck plus Vitest coverage
-make widget-e2e   # Playwright browser contract
+make test-short
+make test
+make coverage
+make lint
+pnpm --filter @fidibeki/web test
+pnpm --filter @fidibeki/marketing test
+pnpm --filter @fidibeki/widget test
+pnpm --filter @fidibeki/mobile test
 ```
 
-Integration tests start disposable PostgreSQL 16, Redis 7.4, and MinIO containers. The PostgreSQL
-suite verifies migration up/down/up behavior, app/admin database roles, and positive and negative
-RLS isolation.
+## Architecture
 
-## Database access
+```text
+Browser / mobile app → Widget or SDK → Go API → PostgreSQL (RLS)
+                                           ├→ Redis / Asynq workers
+                                           └→ S3-compatible object storage
+```
 
-Application code has two pools with deliberately separate capabilities:
+Frontend applications live in `web/`, `backoffice/`, and `marketing/`; the widget is in `widget/`, and mobile packages are in `mobile/` and `examples/mobile/`.
 
-- `fidibeki_app` is subject to forced RLS and serves tenant-scoped handlers.
-- `fidibeki_admin` bypasses RLS for platform operations and tenant resolution.
-- Migrations use `DATABASE_URL_DIRECT`, bypass PgBouncer, and provision both runtime roles from the
-  credentials in `DATABASE_URL_APP` and `DATABASE_URL_ADMIN`.
+## Documentation
 
-Tenant HTTP requests run in an app-pool transaction. Middleware resolves the subdomain using the
-admin pool, sets `app.tenant_id` transaction-locally, and only flushes the HTTP response after the
-transaction commits.
+- [Mobile capture](docs/mobile-capture.md)
+- [Transactional email](docs/transactional-email.md)
+- [SAML single sign-on](docs/saml-sso.md)
+- [Privacy and retention](docs/privacy-data-map.md)
+
+## Contributing and security
+
+Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) before opening an issue or pull request.
+
+For vulnerabilities, follow [SECURITY.md](SECURITY.md); do not disclose security issues in public tickets.
+
+## License
+
+Fidibeki is licensed under the [GNU Affero General Public License v3.0](LICENSE). If you modify and run it for users over a network, you must offer them the corresponding source code.
