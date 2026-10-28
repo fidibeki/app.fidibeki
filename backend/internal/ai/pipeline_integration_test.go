@@ -181,7 +181,7 @@ func TestAIPipelineStateMachine(t *testing.T) {
 	if err == nil || errors.Is(err, asynq.SkipRetry) {
 		t.Fatalf("transient attachment error = %v", err)
 	}
-	assertAttachmentState(t, ctx, pool, testAudioID, "pending", 2, stringPointer("upstream timeout"))
+	assertAttachmentState(t, ctx, pool, testAudioID, "pending", 2, stringPointer("internal_error"))
 
 	analyzer.attachmentErr = nil
 	if _, err := store.RetryAttachment(ctx, pool, testTenantID, testAudioID); err != nil {
@@ -196,7 +196,7 @@ func TestAIPipelineStateMachine(t *testing.T) {
 	if !errors.Is(err, asynq.SkipRetry) {
 		t.Fatalf("permanent attachment error = %v, want SkipRetry", err)
 	}
-	assertAttachmentState(t, ctx, pool, testAudioID, "failed", 3, stringPointer("malformed media"))
+	assertAttachmentState(t, ctx, pool, testAudioID, "failed", 3, stringPointer("permanent_failure"))
 
 	if err := store.ReprocessFeedback(ctx, pool, testTenantID, testFeedbackID); err != nil {
 		t.Fatalf("ReprocessFeedback() error = %v", err)
@@ -772,7 +772,7 @@ func TestAIProcessingPolicyDisableDiscardsInFlightResult(t *testing.T) {
 	`, work.RunID).Scan(&status, &reason, &completedAt); err != nil {
 		t.Fatalf("read discarded AI evidence: %v", err)
 	}
-	if status != "discarded" || reason != "policy_disabled" || completedAt == nil {
+	if status != "discarded" || reason != "configuration_changed" || completedAt == nil {
 		t.Fatalf("discarded AI evidence = %s/%s/%v", status, reason, completedAt)
 	}
 	var cleaned, title *string

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/fidibeki/app.fidibeki/backend/internal/abuse"
+	"github.com/fidibeki/app.fidibeki/backend/internal/aiprovider"
 	"github.com/fidibeki/app.fidibeki/backend/internal/config"
 	"github.com/fidibeki/app.fidibeki/backend/internal/db"
 	"github.com/fidibeki/app.fidibeki/backend/internal/tenant"
@@ -36,6 +37,7 @@ func (s Store) PrepareFeedback(
 	dailyLimit int,
 	now time.Time,
 ) ([]PreparedTask, bool, error) {
+	var contract json.RawMessage
 	tx, err := s.Database.Begin(ctx)
 	if err != nil {
 		return nil, false, fmt.Errorf("begin AI scheduling: %w", err)
@@ -66,7 +68,7 @@ func (s Store) PrepareFeedback(
 		       COALESCE(rule.ai_processing->'input_categories' ? 'screenshot', false),
 		       COALESCE(rule.ai_processing->'input_categories' ? 'audio', false),
 		       COALESCE(rule.ai_processing->'input_categories' ? 'video', false),
-		       fidibeki_privacy_feedback_restricted(feedback.tenant_id, feedback.id, 'ai')
+		       fidibeki_privacy_feedback_restricted(feedback.tenant_id, feedback.id, 'ai'), COALESCE(rule.ai_processing,'{}'::jsonb)
 		FROM feedbacks AS feedback
 		JOIN tenants AS tenant ON tenant.id = feedback.tenant_id
 		LEFT JOIN widget_rules AS rule
@@ -77,7 +79,7 @@ func (s Store) PrepareFeedback(
 	`, feedbackID, now).Scan(
 		&tenantID, &projectID, &planValue, &tenantEligible, &text, &textStatus, &textEnqueuedAt,
 		&textGeneration, &textDeferredUntil, &aiEnabled, &textAIEnabled,
-		&screenshotAIEnabled, &audioAIEnabled, &videoAIEnabled, &processingRestricted,
+		&screenshotAIEnabled, &audioAIEnabled, &videoAIEnabled, &processingRestricted, &contract,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, false, ErrNotFound
@@ -124,6 +126,28 @@ func (s Store) PrepareFeedback(
 		return nil, false, nil
 	}
 
+	var selection aiprovider.Selection
+	if err := json.Unmarshal(contract, &selection); err != nil {
+		return nil, false, err
+	}
+	var selected struct {
+		Inputs []string `json:"input_categories"`
+	}
+	if err := json.Unmarshal(contract, &selected); err != nil {
+		return nil, false, err
+	}
+	if err := aiprovider.ValidateSelection(ctx, tx, tenantID, selection, selected.Inputs); err != nil {
+		if !errors.Is(err, aiprovider.ErrUnvalidated) && !errors.Is(err, aiprovider.ErrInvalid) {
+			return nil, false, err
+		}
+		if err := cancelFeedbackForTenantLifecycle(ctx, tx, tenantID, feedbackID, now); err != nil {
+			return nil, false, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return nil, false, err
+		}
+		return nil, false, nil
+	}
 	usageDate := midnightUTC(now)
 	deferredUntil := usageDate.AddDate(0, 0, 1)
 	prepared := make([]PreparedTask, 0)
@@ -284,6 +308,9 @@ func (s Store) PrepareFeedback(
 		})
 	}
 
+	if err := s.pinPrepared(ctx, tx, prepared, contract); err != nil {
+		return nil, false, err
+	}
 	if err := updateCompletion(ctx, tx, feedbackID, now); err != nil {
 		return nil, false, err
 	}
@@ -453,7 +480,7 @@ func (s Store) InFlightTasks(ctx context.Context, limit int) ([]PreparedTask, er
 	rows, err := s.Database.Query(ctx, `
 		SELECT kind, tenant_id, project_id, resource_id, attempt, generation, enqueued_at
 		FROM (
-			SELECT 'text'::text AS kind, feedback.tenant_id, feedback.project_id,
+			SELECT 'text'::text AS kind, feedback.tenant_id, feedback.project_id::text,
 			       feedback.id AS resource_id, 0 AS attempt,
 			       feedback.text_processing_generation AS generation,
 			       feedback.ai_job_enqueued_at AS enqueued_at
@@ -471,7 +498,7 @@ func (s Store) InFlightTasks(ctx context.Context, limit int) ([]PreparedTask, er
 			      feedback.tenant_id, feedback.id, 'ai'
 			  )
 			UNION ALL
-			SELECT 'attachment', attachment.tenant_id, feedback.project_id,
+			SELECT 'attachment', attachment.tenant_id, feedback.project_id::text,
 			       attachment.id, attachment.processing_attempts, 0, attachment.created_at
 			FROM attachments AS attachment
 			JOIN feedbacks AS feedback ON feedback.id = attachment.feedback_id
@@ -489,11 +516,9 @@ func (s Store) InFlightTasks(ctx context.Context, limit int) ([]PreparedTask, er
 			      attachment.tenant_id, feedback.id, 'ai'
 			  )
 			UNION ALL
-			SELECT 'file_delete', file.tenant_id, feedback.project_id,
+			SELECT 'file_delete', file.tenant_id, ''::text,
 			       file.id, file.delete_attempts, 0, file.delete_enqueued_at
 			FROM ai_gemini_files AS file
-			JOIN attachments AS attachment ON attachment.id = file.attachment_id
-			JOIN feedbacks AS feedback ON feedback.id = attachment.feedback_id
 			WHERE file.deleted_at IS NULL AND file.failed_at IS NULL
 			  AND file.delete_enqueued_at IS NOT NULL
 		) AS in_flight
@@ -613,11 +638,11 @@ func (s Store) TrackGeminiFile(
 	var id string
 	err := s.Database.QueryRow(ctx, `
 		INSERT INTO ai_gemini_files (
-			tenant_id, attachment_id, processing_run_id, file_name, delete_after
+			tenant_id, attachment_id, processing_run_id, file_name, delete_after, connection_id, config_version, credential_version, credential_envelope
 		)
-		VALUES ($1, $2, $3, $4, $5)
+		VALUES ($1, $2, (SELECT id FROM ai_processing_runs WHERE id=$3), $4, $5, $6, $7, $8, $9)
 		RETURNING id
-	`, work.TenantID, work.AttachmentID, nullableText(work.RunID), fileName, deleteAfter).Scan(&id)
+	`, work.TenantID, work.AttachmentID, nullableText(work.RunID), fileName, deleteAfter, nullableText(work.Execution.ConnectionID), work.Execution.ConfigVersion, work.CredentialVersion, work.CredentialEnvelope).Scan(&id)
 	if err != nil {
 		return "", fmt.Errorf("track Gemini file: %w", err)
 	}
@@ -662,7 +687,7 @@ func (s Store) CompleteTrackedGeminiFileDeletion(
 ) error {
 	if _, err := s.Database.Exec(ctx, `
 		UPDATE ai_gemini_files
-		SET deleted_at = $2, delete_enqueued_at = NULL, last_error = NULL
+		SET deleted_at = $2, delete_enqueued_at = NULL, last_error = NULL, credential_envelope = NULL
 		WHERE id = $1 AND deleted_at IS NULL AND failed_at IS NULL
 	`, id, now); err != nil {
 		return fmt.Errorf("complete tracked Gemini file deletion: %w", err)
@@ -717,11 +742,11 @@ func (s Store) ClaimGeminiFile(
 ) (GeminiFileWork, error) {
 	work := GeminiFileWork{ID: id, TenantID: tenantID, Attempt: attempt}
 	err := s.Database.QueryRow(ctx, `
-		SELECT file_name
+		SELECT file_name, COALESCE(connection_id::text,''), COALESCE(credential_version,0), credential_envelope
 		FROM ai_gemini_files
 		WHERE id = $1 AND tenant_id = $2 AND delete_attempts = $3
 		  AND delete_enqueued_at IS NOT NULL AND deleted_at IS NULL AND failed_at IS NULL
-	`, id, tenantID, attempt).Scan(&work.FileName)
+	`, id, tenantID, attempt).Scan(&work.FileName, &work.ConnectionID, &work.CredentialVersion, &work.CredentialEnvelope)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return GeminiFileWork{}, ErrNoWork
 	}
@@ -738,7 +763,7 @@ func (s Store) CompleteGeminiFileDeletion(
 ) error {
 	if _, err := s.Database.Exec(ctx, `
 		UPDATE ai_gemini_files
-		SET deleted_at = $4, delete_enqueued_at = NULL, last_error = NULL
+		SET deleted_at = $4, delete_enqueued_at = NULL, last_error = NULL, credential_envelope = NULL
 		WHERE id = $1 AND tenant_id = $2 AND delete_attempts = $3
 		  AND deleted_at IS NULL AND failed_at IS NULL
 	`, work.ID, work.TenantID, work.Attempt, now); err != nil {
@@ -841,6 +866,7 @@ func (s Store) ClaimText(
 		}
 		return TextWork{}, ErrNoWork
 	}
+	var contract json.RawMessage
 	var work TextWork
 	work.TenantID, work.FeedbackID, work.Generation = tenantID, feedbackID, generation
 	err = tx.QueryRow(ctx, `
@@ -856,9 +882,9 @@ func (s Store) ClaimText(
 		  AND feedback.text_processing_generation = $3
 		  AND NOT fidibeki_privacy_feedback_restricted(feedback.tenant_id, feedback.id, 'ai')
 		RETURNING feedback.text, feedback.project_id, rule.id,
-		          rule.ai_processing->>'policy_version'
+		          rule.ai_processing->>'policy_version', rule.ai_processing
 	`, feedbackID, tenantID, generation).Scan(
-		&work.Text, &work.ProjectID, &work.RuleID, &work.PolicyVersion,
+		&work.Text, &work.ProjectID, &work.RuleID, &work.PolicyVersion, &contract,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return TextWork{}, ErrNoWork
@@ -866,19 +892,36 @@ func (s Store) ClaimText(
 	if err != nil {
 		return TextWork{}, fmt.Errorf("claim text AI: %w", err)
 	}
+	work.Execution, err = s.readExecution(ctx, tx, tenantID, feedbackID, false, contract)
+	if err != nil {
+		return TextWork{}, err
+	}
+	eligible, err = executionEligible(ctx, tx, tenantID, work.RuleID, "feedback_text", work.Execution)
+	if err != nil {
+		return TextWork{}, err
+	}
+	if !eligible {
+		if err := cancelStaleText(ctx, tx, tenantID, feedbackID, generation, time.Now().UTC()); err != nil {
+			return TextWork{}, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return TextWork{}, err
+		}
+		return TextWork{}, ErrNoWork
+	}
 	if err := tx.QueryRow(ctx, `
 		INSERT INTO ai_processing_runs (
 			tenant_id, project_id, feedback_id, widget_rule_id, generation,
-			policy_version, provider, model, purpose, input_category, status
+			policy_version, provider, model, purpose, input_category, status, connection_id, config_version, billing_mode
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, 'google_gemini', $7,
-			'advisory_feedback_analysis', 'feedback_text', 'processing'
+			$1, $2, $3, $4, $5, $6, $8, $7,
+			'advisory_feedback_analysis', 'feedback_text', 'processing', $9, $10, $11
 		)
 		ON CONFLICT (tenant_id, feedback_id, generation) WHERE attachment_id IS NULL
 		DO UPDATE SET status = 'processing', completed_at = NULL, failure_reason = NULL
 		RETURNING id
 	`, work.TenantID, work.ProjectID, work.FeedbackID, work.RuleID, work.Generation,
-		work.PolicyVersion, s.model()).Scan(&work.RunID); err != nil {
+		work.PolicyVersion, work.Execution.Model, work.Execution.Provider, nullableText(work.Execution.ConnectionID), work.Execution.ConfigVersion, work.Execution.BillingMode).Scan(&work.RunID); err != nil {
 		return TextWork{}, fmt.Errorf("start text AI processing evidence: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -912,6 +955,7 @@ func (s Store) ClaimAttachment(
 		}
 		return AttachmentWork{}, ErrNoWork
 	}
+	var contract json.RawMessage
 	var work AttachmentWork
 	work.TenantID, work.AttachmentID, work.Attempt = tenantID, attachmentID, attempt
 	err = tx.QueryRow(ctx, `
@@ -943,10 +987,10 @@ func (s Store) ClaimAttachment(
 			  )
 		RETURNING feedback.id, feedback.project_id, attachment.kind,
 		          attachment.storage_key, attachment.content_type, rule.id,
-		          rule.ai_processing->>'policy_version'
+		          rule.ai_processing->>'policy_version', rule.ai_processing
 	`, attachmentID, tenantID, attempt).Scan(
 		&work.FeedbackID, &work.ProjectID, &work.Kind, &work.StorageKey, &work.ContentType,
-		&work.RuleID, &work.PolicyVersion,
+		&work.RuleID, &work.PolicyVersion, &contract,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return AttachmentWork{}, ErrNoWork
@@ -954,19 +998,36 @@ func (s Store) ClaimAttachment(
 	if err != nil {
 		return AttachmentWork{}, fmt.Errorf("claim attachment AI: %w", err)
 	}
+	work.Execution, err = s.readExecution(ctx, tx, tenantID, attachmentID, true, contract)
+	if err != nil {
+		return AttachmentWork{}, err
+	}
+	eligible, err = executionEligible(ctx, tx, tenantID, work.RuleID, work.Kind, work.Execution)
+	if err != nil {
+		return AttachmentWork{}, err
+	}
+	if !eligible {
+		if err := cancelStaleAttachment(ctx, tx, tenantID, attachmentID, attempt, time.Now().UTC()); err != nil {
+			return AttachmentWork{}, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return AttachmentWork{}, err
+		}
+		return AttachmentWork{}, ErrNoWork
+	}
 	if err := tx.QueryRow(ctx, `
 		INSERT INTO ai_processing_runs (
 			tenant_id, project_id, feedback_id, attachment_id, widget_rule_id, attempt,
-			policy_version, provider, model, purpose, input_category, status
+			policy_version, provider, model, purpose, input_category, status, connection_id, config_version, billing_mode
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, 'google_gemini', $8,
-			'advisory_feedback_analysis', $9, 'processing'
+			$1, $2, $3, $4, $5, $6, $7, $10, $8,
+			'advisory_feedback_analysis', $9, 'processing', $11, $12, $13
 		)
 		ON CONFLICT (tenant_id, attachment_id, attempt) WHERE attachment_id IS NOT NULL
 		DO UPDATE SET status = 'processing', completed_at = NULL, failure_reason = NULL
 		RETURNING id
 	`, work.TenantID, work.ProjectID, work.FeedbackID, work.AttachmentID, work.RuleID,
-		work.Attempt, work.PolicyVersion, s.model(), work.Kind).Scan(&work.RunID); err != nil {
+		work.Attempt, work.PolicyVersion, work.Execution.Model, work.Kind, work.Execution.Provider, nullableText(work.Execution.ConnectionID), work.Execution.ConfigVersion, work.Execution.BillingMode).Scan(&work.RunID); err != nil {
 		return AttachmentWork{}, fmt.Errorf("start attachment AI processing evidence: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -981,6 +1042,29 @@ func (s Store) CompleteText(ctx context.Context, work TextWork, result Result, n
 		return fmt.Errorf("begin text AI completion: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	eligible, err := tenantAIProcessingEligible(ctx, tx, work.TenantID)
+	if err != nil {
+		return err
+	}
+	if eligible {
+		eligible, err = executionEligible(ctx, tx, work.TenantID, work.RuleID, "feedback_text", work.Execution)
+		if err != nil {
+			return err
+		}
+	}
+	if !eligible {
+		if err := cancelStaleText(ctx, tx, work.TenantID, work.FeedbackID, work.Generation, now); err != nil {
+			return err
+		}
+		if err := discardProcessingRun(ctx, tx, work.RunID, "configuration_changed", now); err != nil {
+			return err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return err
+		}
+		return ErrNoWork
+	}
+
 	tag, err := tx.Exec(ctx, `
 		UPDATE feedbacks AS feedback
 		SET text_cleaned = $3, text_sentiment_score = $4,
@@ -994,6 +1078,7 @@ func (s Store) CompleteText(ctx context.Context, work TextWork, result Result, n
 		  AND COALESCE((rule.ai_processing->>'enabled')::boolean, false)
 		  AND COALESCE(rule.ai_processing->'input_categories' ? 'feedback_text', false)
 		  AND feedback.text_process_status = 'processing'
+          AND NOT fidibeki_privacy_feedback_restricted(feedback.tenant_id, feedback.id, 'ai')
 		  AND feedback.text_processing_generation = $6
 	`, work.FeedbackID, work.TenantID, nullableText(result.CleanedText),
 		result.SentimentScore, moderationFlags(result.ModerationFlags), work.Generation,
@@ -1033,6 +1118,29 @@ func (s Store) CompleteAttachment(ctx context.Context, work AttachmentWork, resu
 		return fmt.Errorf("begin attachment AI completion: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	eligible, err := tenantAIProcessingEligible(ctx, tx, work.TenantID)
+	if err != nil {
+		return err
+	}
+	if eligible {
+		eligible, err = executionEligible(ctx, tx, work.TenantID, work.RuleID, work.Kind, work.Execution)
+		if err != nil {
+			return err
+		}
+	}
+	if !eligible {
+		if err := cancelStaleAttachment(ctx, tx, work.TenantID, work.AttachmentID, work.Attempt, now); err != nil {
+			return err
+		}
+		if err := discardProcessingRun(ctx, tx, work.RunID, "configuration_changed", now); err != nil {
+			return err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return err
+		}
+		return ErrNoWork
+	}
+
 	tag, err := tx.Exec(ctx, `
 		UPDATE attachments
 		SET transcription = $4, sentiment_score = $5, moderation_flags = $6,
@@ -1046,6 +1154,7 @@ func (s Store) CompleteAttachment(ctx context.Context, work AttachmentWork, resu
 			  AND attachments.processing_attempts = $3
 			  AND attachments.processing_status = 'processing'
 			  AND attachments.safety_status = 'safe'
+              AND NOT fidibeki_privacy_feedback_restricted(attachments.tenant_id, feedback.id, 'ai')
 			  AND COALESCE((rule.ai_processing->>'enabled')::boolean, false)
 			  AND COALESCE(
 			      (rule.ai_processing->'input_categories') ?
@@ -1563,9 +1672,9 @@ func completeProcessingRun(
 	if _, err := query.Exec(ctx, `
 		UPDATE ai_processing_runs
 		SET status = 'completed', redaction_manifest = $2::jsonb,
-		    failure_reason = NULL, completed_at = $3
+		    failure_reason = NULL, completed_at = $3, token_usage=$4::jsonb, resolved_model=NULLIF($5,'')
 		WHERE id = $1 AND status = 'processing'
-	`, runID, redactionManifest(result), now); err != nil {
+	`, runID, redactionManifest(result), now, mustUsageJSON(result.Usage), result.ResolvedModel); err != nil {
 		return fmt.Errorf("complete AI processing evidence: %w", err)
 	}
 	return nil
@@ -1623,3 +1732,5 @@ func moderationFlags(values []string) []string {
 	}
 	return values
 }
+
+func mustUsageJSON(usage Usage) string { data, _ := json.Marshal(usage); return string(data) }

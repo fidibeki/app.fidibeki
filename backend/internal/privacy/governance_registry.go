@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-const governanceRegistryVersion = 1
+const governanceRegistryVersion = 2
 
 // governanceReviewStalenessWindow bounds how long a recorded review may be treated as current.
 const governanceReviewStalenessWindow = 180 * 24 * time.Hour
@@ -230,10 +230,47 @@ func providerGovernanceRegistry() []ProviderGovernanceRecord {
 			GovernanceBoundaryServiceProvider,
 			"Analyze explicitly authorized feedback attachments or text for AI-assisted triage.",
 			[]string{"explicitly authorized feedback attachment media or text"},
-			"backend/internal/config/config.go (GeminiAPIKey)",
-			"GEMINI_API_KEY required only when APP_ENV=production; "+
+			"backend/internal/config/config.go (GeminiAPIKey); "+
+				"docs/superpowers/specs/2026-07-24-ai-privacy-governance-design.md",
+			"GEMINI_API_KEY required in production when AI_MANAGED_MODE=enabled; customer connections use encrypted credentials; "+
 				"additionally gated per widget rule ai_processing.enabled",
 			GovernanceEnvironmentProductionOnly, "ai_provider_files",
+		),
+		pendingProvider(
+			"openai_api", "OpenAI API", "ai",
+			GovernanceBoundaryServiceProvider,
+			"Process explicitly authorized feedback using customer-owned API credentials and a validated model.",
+			[]string{"authorized minimized feedback text or screenshots", "synthetic connection validation content"},
+			"backend/internal/ai/provider_factory.go; docs/operations/customer-ai-providers.md",
+			"Disabled by default; requires AI_CUSTOMER_PROVIDERS and AI_CUSTOMER_TENANTS plus per-widget authorization",
+			GovernanceEnvironmentConditionalOnDriver, "customer_ai_processing",
+		),
+		pendingProvider(
+			"anthropic_api", "Anthropic API", "ai",
+			GovernanceBoundaryServiceProvider,
+			"Process explicitly authorized feedback using customer-owned API credentials and a validated model.",
+			[]string{"authorized minimized feedback text or screenshots", "synthetic connection validation content"},
+			"backend/internal/ai/provider_factory.go; docs/operations/customer-ai-providers.md",
+			"Disabled by default; requires AI_CUSTOMER_PROVIDERS and AI_CUSTOMER_TENANTS plus per-widget authorization",
+			GovernanceEnvironmentConditionalOnDriver, "customer_ai_processing",
+		),
+		pendingProvider(
+			"amazon_bedrock_api", "Amazon Bedrock and STS", "ai",
+			GovernanceBoundaryServiceProvider,
+			"Process explicitly authorized feedback using customer-owned API credentials and a validated model.",
+			[]string{"authorized minimized feedback text or screenshots", "synthetic connection validation content"},
+			"backend/internal/ai/provider_factory.go; docs/operations/customer-ai-providers.md",
+			"Disabled by default; requires AI_CUSTOMER_PROVIDERS and AI_CUSTOMER_TENANTS plus per-widget authorization",
+			GovernanceEnvironmentConditionalOnDriver, "customer_ai_processing",
+		),
+		pendingProvider(
+			"customer_ai_endpoint", "Customer-selected compatible AI endpoint", "ai",
+			GovernanceBoundaryServiceProvider,
+			"Process explicitly authorized feedback using customer-owned API credentials and a validated model.",
+			[]string{"authorized minimized feedback text or screenshots", "synthetic connection validation content"},
+			"backend/internal/ai/provider_factory.go; docs/operations/customer-ai-providers.md",
+			"Disabled by default; requires AI_CUSTOMER_PROVIDERS and AI_CUSTOMER_TENANTS plus per-widget authorization",
+			GovernanceEnvironmentConditionalOnDriver, "customer_ai_processing",
 		),
 		pendingProvider(
 			"stripe_billing_api", "Stripe billing API", "billing",

@@ -56,7 +56,7 @@ const english: SystemMessages = {
   configurationChanged: 'The feedback form changed. Review your answers and submit again.',
   privacyPolicy: 'Privacy policy',
   aiProcessingDisclosure:
-    'Submitted text and screenshots may be processed to organize this feedback.',
+    'Submitted text and screenshots may be processed by {provider} to organize this feedback.',
   rating: 'Rating',
   feedback: 'Feedback',
   reaction: 'Reaction',
@@ -89,7 +89,7 @@ const portuguese: SystemMessages = {
   configurationChanged: 'O formulário mudou. Reveja as respostas e envie novamente.',
   privacyPolicy: 'Política de privacidade',
   aiProcessingDisclosure:
-    'O texto e as capturas de ecrã enviados podem ser processados para organizar este feedback.',
+    'O texto e as capturas de ecrã enviados podem ser processados por {provider} para organizar este feedback.',
   rating: 'Classificação',
   feedback: 'Feedback',
   reaction: 'Reação',

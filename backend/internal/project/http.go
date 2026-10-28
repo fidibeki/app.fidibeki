@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/fidibeki/app.fidibeki/backend/internal/aiprovider"
 	"github.com/fidibeki/app.fidibeki/backend/internal/api"
 	"github.com/fidibeki/app.fidibeki/backend/internal/auth"
 	"github.com/fidibeki/app.fidibeki/backend/internal/config"
@@ -402,6 +403,11 @@ func writeValidation(w http.ResponseWriter, fields FieldErrors) {
 }
 
 func writeStoreError(w http.ResponseWriter, err error) {
+	if errors.Is(err, aiprovider.ErrInvalid) || errors.Is(err, aiprovider.ErrUnvalidated) || errors.Is(err, aiprovider.ErrDisabled) {
+		api.WriteError(w, http.StatusUnprocessableEntity, api.CodeValidation, "select a validated AI connection and model", nil)
+		return
+	}
+
 	if errors.Is(err, ErrNotFound) {
 		api.WriteError(w, http.StatusNotFound, api.CodeNotFound, "resource not found", nil)
 		return

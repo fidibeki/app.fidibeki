@@ -74,7 +74,7 @@ const systemCopy: Record<string, WidgetSystemCopy> = {
     consentRetention: 'Retained for up to {days} days.',
     withdrawn: 'Consent withdrawn.',
     withdrawError: 'Your choice could not be saved. Please try again.',
-    aiDisclosure: 'Selected feedback content may be processed by Google Gemini for advisory analysis.',
+    aiDisclosure: 'Selected feedback content may be processed by {provider} for advisory analysis.',
     aiScope: 'Content types: {categories}.',
     aiInputNames: {
       feedback_text: 'written feedback', screenshot: 'screenshots',
@@ -115,7 +115,7 @@ const systemCopy: Record<string, WidgetSystemCopy> = {
     consentRetention: 'Conservado até {days} dias.',
     withdrawn: 'Consentimento retirado.',
     withdrawError: 'Não foi possível guardar a escolha. Tenta novamente.',
-    aiDisclosure: 'O conteúdo de feedback selecionado pode ser processado pelo Google Gemini para análise consultiva.',
+    aiDisclosure: 'O conteúdo de feedback selecionado pode ser processado pelo {provider} para análise consultiva.',
     aiScope: 'Tipos de conteúdo: {categories}.',
     aiInputNames: {
       feedback_text: 'feedback escrito', screenshot: 'capturas de ecrã',

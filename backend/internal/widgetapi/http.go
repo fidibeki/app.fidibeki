@@ -105,6 +105,7 @@ type PublicWidgetRule struct {
 }
 
 type PublicAIProcessing struct {
+	ProviderLabel    string                    `json:"provider_label,omitempty"`
 	Enabled          bool                      `json:"enabled"`
 	Provider         string                    `json:"provider,omitempty"`
 	InputCategories  []project.AIInputCategory `json:"input_categories,omitempty"`
@@ -346,7 +347,7 @@ func publicWidgetRule(rule project.WidgetRule, controllerProfileComplete bool) P
 		CollectContact: rule.CollectContact && controllerProfileComplete &&
 			project.HasCompleteContactNotices(rule.Localizations),
 		AIProcessing: PublicAIProcessing{
-			Enabled: rule.AIProcessing.Enabled, Provider: rule.AIProcessing.Provider,
+			Enabled: rule.AIProcessing.Enabled, Provider: rule.AIProcessing.Provider, ProviderLabel: rule.AIProcessing.ProviderLabel,
 			InputCategories:  rule.AIProcessing.InputCategories,
 			PrivacyPolicyURL: rule.AIProcessing.PrivacyPolicyURL,
 			PolicyVersion:    rule.AIProcessing.PolicyVersion,

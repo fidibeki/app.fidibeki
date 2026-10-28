@@ -130,6 +130,7 @@ func PublicConfigurationFrom(resolved ResolvedConfiguration) PublicConfiguration
 			AIProcessing: PublicAIProcessing{
 				Enabled:          definition.AIProcessing.Enabled,
 				Provider:         definition.AIProcessing.Provider,
+				ProviderLabel:    definition.AIProcessing.ProviderLabel,
 				InputCategories:  definition.AIProcessing.InputCategories,
 				PrivacyPolicyURL: definition.AIProcessing.PrivacyPolicyURL,
 				PolicyVersion:    definition.AIProcessing.PolicyVersion,

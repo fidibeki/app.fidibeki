@@ -3,7 +3,7 @@ import type { LocationQuery } from 'vue-router'
 /** The settings sections in display order. The rail and the settings page both
  *  read this list, so a new section appears in navigation and content from one
  *  edit instead of two drifting copies. */
-export const settingsSectionIDs = ['workspace', 'members', 'security', 'sso', 'keys', 'integrations', 'health', 'privacy', 'audit'] as const
+export const settingsSectionIDs = ['workspace', 'members', 'security', 'sso', 'keys', 'integrations', 'ai', 'health', 'privacy', 'audit'] as const
 export type SettingsSectionID = typeof settingsSectionIDs[number]
 
 /** Workspace is the bare /settings URL; every other section is ?tab=. */

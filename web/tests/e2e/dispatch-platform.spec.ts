@@ -9194,7 +9194,7 @@ test("member and API key permissions share a compact custom-aware editor", async
   const memberDialog = page.getByRole("dialog", { name: "Invite member" });
   const memberEditor = memberDialog.locator(".permission-editor");
   await expect(memberEditor).toBeVisible();
-  await expect(memberEditor.locator("fieldset")).toHaveCount(14);
+  await expect(memberEditor.locator("fieldset")).toHaveCount(15);
   await memberEditor.getByRole("button", { name: "Admin" }).click();
   await expect(
     memberEditor.getByRole("button", { name: "Admin" }),
@@ -9227,7 +9227,7 @@ test("member and API key permissions share a compact custom-aware editor", async
   const keyDialog = page.getByRole("dialog", { name: "Create API key" });
   const keyEditor = keyDialog.locator(".permission-editor");
   await expect(keyEditor).toBeVisible();
-  await expect(keyEditor.locator("fieldset")).toHaveCount(14);
+  await expect(keyEditor.locator("fieldset")).toHaveCount(15);
   await expect(
     keyEditor.getByRole("button", { name: "Viewer" }),
   ).toHaveAttribute("data-active", "true");

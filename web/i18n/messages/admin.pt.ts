@@ -75,6 +75,7 @@ export const adminMessages = {
     loading: 'A carregar definições',
     unavailable: 'Definições indisponíveis',
     tabs: {
+        ai: 'Serviços de IA',
       workspace: 'Workspace',
       members: 'Membros',
       security: 'Segurança',

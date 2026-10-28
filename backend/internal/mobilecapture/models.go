@@ -128,6 +128,7 @@ type PublicDefinition struct {
 }
 
 type PublicAIProcessing struct {
+	ProviderLabel    string                    `json:"provider_label,omitempty"`
 	Enabled          bool                      `json:"enabled"`
 	Provider         string                    `json:"provider,omitempty"`
 	InputCategories  []project.AIInputCategory `json:"input_categories,omitempty"`

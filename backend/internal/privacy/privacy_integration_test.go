@@ -103,7 +103,7 @@ func TestWorkspaceExportTracer(t *testing.T) {
 
 	files := readPrivacyArchive(t, storage.body)
 	wantFiles := []string{
-		"ai-processing-runs.jsonl", "attachments.jsonl", "email-feedback-campaigns.jsonl",
+		"ai-connections.jsonl", "ai-processing-runs.jsonl", "attachments.jsonl", "email-feedback-campaigns.jsonl",
 		"email-feedback-invitations.jsonl", "email-feedback-suppressions.jsonl",
 		"feedback-tags.jsonl", "feedback.jsonl", "integrations.jsonl",
 		"issue-activities.jsonl", "issue-comments.jsonl", "issue-tags.jsonl", "issue-updates.jsonl",
@@ -328,7 +328,7 @@ func TestWorkspaceExportHTTPAuthorizationAndDownload(t *testing.T) {
 	retention := privacyHTTPRequest(handler, viewerToken, http.MethodGet, "/v1/privacy/retention")
 	if retention.Code != http.StatusOK ||
 		!strings.Contains(retention.Body.String(), `"plan":"growth"`) ||
-		!strings.Contains(retention.Body.String(), `"registry_version":1`) ||
+		!strings.Contains(retention.Body.String(), `"registry_version":2`) ||
 		!strings.Contains(retention.Body.String(), `"decision_required":14`) ||
 		!strings.Contains(retention.Body.String(), `"duration_days":90`) ||
 		!strings.Contains(retention.Body.String(), `"status":"configurable"`) ||

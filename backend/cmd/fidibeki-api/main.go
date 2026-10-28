@@ -14,6 +14,7 @@ import (
 	"github.com/fidibeki/app.fidibeki/backend/internal/abuse"
 	"github.com/fidibeki/app.fidibeki/backend/internal/accessaudit"
 	aiprocessing "github.com/fidibeki/app.fidibeki/backend/internal/ai"
+	"github.com/fidibeki/app.fidibeki/backend/internal/aiprovider"
 	"github.com/fidibeki/app.fidibeki/backend/internal/api"
 	"github.com/fidibeki/app.fidibeki/backend/internal/apikey"
 	"github.com/fidibeki/app.fidibeki/backend/internal/auth"
@@ -557,6 +558,11 @@ func serve(ctx context.Context, logger *slog.Logger, settings config.Config) err
 	accessaudit.RegisterTenantRoutes(tenantRoutes, accessaudit.HTTPOptions{
 		Store: accessaudit.Store{}, JWT: jwtManager, Logger: logger,
 	})
+	aiFactory, err := newAIProviderFactory(settings, pools.Admin, logger)
+	if err != nil {
+		return err
+	}
+	aiprovider.RegisterRoutes(tenantRoutes, aiprovider.HTTPOptions{Store: aiFactory.Connections, JWT: jwtManager, Tester: aiFactory, Limiter: publicLimiter, Allowed: aiFactory.Allowed, ManagedAvailable: aiFactory.ManagedKey != "", ManagedModel: settings.GeminiModel, AWSCallerARN: settings.AIAWSCallerARN})
 	aiprocessing.RegisterRoutes(tenantRoutes, aiprocessing.HTTPOptions{
 		Store: aiprocessing.Store{}, JWT: jwtManager, Scheduler: aiScheduler,
 	})
@@ -1012,22 +1018,27 @@ func runWorker(ctx context.Context, logger *slog.Logger, settings config.Config)
 		Diagnostics: abuse.Recorder{Database: pools.Admin, Store: abuse.Store{}},
 		Logger:      logger,
 	}
+	aiFactory, err := newAIProviderFactory(settings, pools.Admin, logger)
+	if err != nil {
+		return err
+	}
+	aiFactory.Ledger = aiStore
 	var analyzer aiprocessing.Analyzer = aiprocessing.UnavailableAnalyzer{}
-	fileDeleteHandler := aiprocessing.UnavailableFileDeleteHandler(aiStore)
-	if settings.GeminiAPIKey != "" {
+	if aiFactory.ManagedKey != "" {
 		geminiAnalyzer, analyzerErr := aiprocessing.NewGeminiAnalyzer(
-			ctx, settings.GeminiAPIKey, settings.GeminiModel, aiStore, logger,
+			ctx, aiFactory.ManagedKey, settings.GeminiModel, aiStore, logger,
 		)
 		err = analyzerErr
 		if err != nil {
 			return err
 		}
 		analyzer = geminiAnalyzer
-		fileDeleteHandler = geminiAnalyzer.FileDeleteHandler(aiStore)
 	} else {
 		logger.Warn("Gemini API key is not configured; AI tasks will remain retryable")
 	}
+	fileDeleteHandler := aiFactory.FileDeleteHandler()
 	processor := aiprocessing.Processor{
+		Factory: aiFactory, Leaser: aiprocessing.RedisConnectionLeaser{Client: redisClient.Client()},
 		Store: aiStore, Analyzer: analyzer, Storage: objectStorage,
 		Limiter: ratelimit.NewRedisLimiter(redisClient.Client()), RPM: settings.GeminiRPM,
 		Logger: logger, Diagnostics: abuse.Recorder{Database: pools.Admin, Store: abuse.Store{}},

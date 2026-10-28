@@ -18,10 +18,10 @@ func TestLoadProviderGovernanceReturnsPendingRegistry(t *testing.T) {
 	if registry.Version != governanceRegistryVersion {
 		t.Fatalf("Version = %d, want %d", registry.Version, governanceRegistryVersion)
 	}
-	if len(registry.Providers) != 16 {
-		t.Fatalf("len(Providers) = %d, want 16", len(registry.Providers))
+	if len(registry.Providers) != 20 {
+		t.Fatalf("len(Providers) = %d, want 20", len(registry.Providers))
 	}
-	if registry.Summary != (GovernanceSummary{PendingApproval: 16, ContractUnknown: 16}) {
+	if registry.Summary != (GovernanceSummary{PendingApproval: 20, ContractUnknown: 20}) {
 		t.Fatalf("Summary = %#v, want all pending/unknown", registry.Summary)
 	}
 	if len(registry.RoleMatrix) != len(retentionRegistry()) {
