@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/widgetconfig"
+	"github.com/fidibeki/app.fidibeki/backend/internal/widgetconfig"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"

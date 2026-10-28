@@ -1,6 +1,6 @@
 package config
 
-import "github.com/acidiney/app.fidibeki/backend/internal/tenant"
+import "github.com/fidibeki/app.fidibeki/backend/internal/tenant"
 
 type Feature string
 

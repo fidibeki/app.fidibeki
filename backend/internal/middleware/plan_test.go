@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/config"
-	"github.com/acidiney/app.fidibeki/backend/internal/db"
-	appmiddleware "github.com/acidiney/app.fidibeki/backend/internal/middleware"
-	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
+	"github.com/fidibeki/app.fidibeki/backend/internal/config"
+	"github.com/fidibeki/app.fidibeki/backend/internal/db"
+	appmiddleware "github.com/fidibeki/app.fidibeki/backend/internal/middleware"
+	"github.com/fidibeki/app.fidibeki/backend/internal/tenant"
 )
 
 func TestRequirePlanLimitReturnsDistinctFeatureAndUsageErrors(t *testing.T) {

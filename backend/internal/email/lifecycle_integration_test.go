@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/db"
+	"github.com/fidibeki/app.fidibeki/backend/internal/db"
 	"github.com/hibiken/asynq"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/testcontainers/testcontainers-go"
@@ -53,10 +53,10 @@ func TestLifecycleHandlerDeliversPersistedTenantEvents(t *testing.T) {
 	sender := &fakeSender{}
 	handler := LifecycleHandler{
 		Database: pool, Sender: sender,
-		PublicBaseURL: "https://api.staging.fidibeki.com", BaseDomain: "staging.fidibeki.com",
+		PublicBaseURL: "https://api.staging.example.test", BaseDomain: "staging.example.test",
 		AuthFrom:       "Fidibeki <auth@fidibeki.com>",
-		WelcomeFrom:    "Acidiney from Fidibeki <acidiney.dias@fidibeki.com>",
-		WelcomeReplyTo: "acidiney.dias@fidibeki.com",
+		WelcomeFrom:    "Fidibeki <welcome@example.test>",
+		WelcomeReplyTo: "welcome@example.test",
 		Now:            func() time.Time { return time.Date(2026, 7, 23, 5, 0, 0, 0, time.UTC) },
 	}.Handler()
 
@@ -74,7 +74,7 @@ func TestLifecycleHandlerDeliversPersistedTenantEvents(t *testing.T) {
 		}
 	}
 	if len(sender.messages) != 1 || sender.messages[0].To != "owner@acme.test" ||
-		sender.messages[0].ReplyTo != "acidiney.dias@fidibeki.com" {
+		sender.messages[0].ReplyTo != "welcome@example.test" {
 		t.Fatalf("welcome messages = %#v", sender.messages)
 	}
 

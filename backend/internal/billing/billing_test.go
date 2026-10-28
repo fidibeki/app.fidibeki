@@ -16,8 +16,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/email"
-	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
+	"github.com/fidibeki/app.fidibeki/backend/internal/email"
+	"github.com/fidibeki/app.fidibeki/backend/internal/tenant"
 	"github.com/go-chi/chi/v5"
 	stripe "github.com/stripe/stripe-go/v85"
 )

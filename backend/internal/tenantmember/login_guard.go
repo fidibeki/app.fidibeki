@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/abuse"
-	"github.com/acidiney/app.fidibeki/backend/internal/ratelimit"
+	"github.com/fidibeki/app.fidibeki/backend/internal/abuse"
+	"github.com/fidibeki/app.fidibeki/backend/internal/ratelimit"
 )
 
 const (

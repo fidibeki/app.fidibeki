@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/ratelimit"
+	"github.com/fidibeki/app.fidibeki/backend/internal/ratelimit"
 )
 
 type Scope string

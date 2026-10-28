@@ -89,14 +89,14 @@ test('staff starts a live conversation, member replies and reconnects through th
     await expect(member.getByRole('button', { name: 'Messages & feedback' })).toBeFocused()
     await member.getByRole('button', { name: 'Messages & feedback' }).click()
 
-    await member.screenshot({ path: '../docs/evidence/live-support-app-desktop.png', animations: 'disabled' })
-    await admin.screenshot({ path: '../docs/evidence/live-support-backoffice-desktop.png', animations: 'disabled' })
+    await member.screenshot({ path: 'test-results/live-support-app-desktop.png', animations: 'disabled' })
+    await admin.screenshot({ path: 'test-results/live-support-backoffice-desktop.png', animations: 'disabled' })
     await admin.setViewportSize({ width: 390, height: 844 })
     await member.setViewportSize({ width: 390, height: 844 })
     await expect(admin.getByRole('button', { name: 'Back to people' })).toBeVisible()
     for (const page of [member, admin]) expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
-    await member.screenshot({ path: '../docs/evidence/live-support-app-mobile.png', animations: 'disabled' })
-    await admin.screenshot({ path: '../docs/evidence/live-support-backoffice-mobile.png', animations: 'disabled' })
+    await member.screenshot({ path: 'test-results/live-support-app-mobile.png', animations: 'disabled' })
+    await admin.screenshot({ path: 'test-results/live-support-backoffice-mobile.png', animations: 'disabled' })
     expect(browserErrors).toEqual([])
     expect(sql(`SELECT count(*) FROM support_messages WHERE tenant_id=${sqlLiteral(tenantID)}`)).toBe('3')
   } finally {

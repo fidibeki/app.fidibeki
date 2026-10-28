@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/auth"
-	"github.com/acidiney/app.fidibeki/backend/internal/membernotify"
+	"github.com/fidibeki/app.fidibeki/backend/internal/auth"
+	"github.com/fidibeki/app.fidibeki/backend/internal/membernotify"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 

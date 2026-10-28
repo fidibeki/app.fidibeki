@@ -46,7 +46,7 @@ Content-Type: application/json
 ```
 
 Use the tenant host for the selected environment, for example
-`https://{tenant}.staging.fidibeki.com` in staging. `context_url` is optional, must be HTTPS,
+`https://{tenant}.staging.example.test` in staging. `context_url` is optional, must be HTTPS,
 and must match an allowed project domain. Query parameters, fragments, repeated separators, and
 trailing slashes are removed from page and screen context.
 

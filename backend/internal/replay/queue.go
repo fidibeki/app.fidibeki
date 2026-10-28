@@ -9,7 +9,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/redisconn"
+	"github.com/fidibeki/app.fidibeki/backend/internal/redisconn"
 	"github.com/hibiken/asynq"
 )
 

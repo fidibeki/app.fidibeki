@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/db"
-	"github.com/acidiney/app.fidibeki/backend/internal/outbox"
+	"github.com/fidibeki/app.fidibeki/backend/internal/db"
+	"github.com/fidibeki/app.fidibeki/backend/internal/outbox"
 	"github.com/hibiken/asynq"
 	"github.com/jackc/pgx/v5"
 )

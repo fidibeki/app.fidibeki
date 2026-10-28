@@ -2,7 +2,7 @@
   "name": "@fidibeki/mobile",
   "version": "0.1.0",
   "description": "Native iOS and Android feedback capture for Fidibeki",
-  "license": "UNLICENSED",
+  "license": "AGPL-3.0-only",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",

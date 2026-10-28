@@ -17,7 +17,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/outboundhttp"
+	"github.com/fidibeki/app.fidibeki/backend/internal/outboundhttp"
 	"github.com/crewjam/saml"
 	xrv "github.com/mattermost/xml-roundtrip-validator"
 )

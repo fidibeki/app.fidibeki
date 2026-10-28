@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/db"
+	"github.com/fidibeki/app.fidibeki/backend/internal/db"
 )
 
 func TestConfigureRuntimeRolesValidatesCredentialURLsBeforeConnecting(t *testing.T) {

@@ -3,7 +3,7 @@ package feedback
 import (
 	"testing"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/moderation"
+	"github.com/fidibeki/app.fidibeki/backend/internal/moderation"
 )
 
 func TestFinalizeTenantFeedbackRedactsFlaggedReporterContent(t *testing.T) {

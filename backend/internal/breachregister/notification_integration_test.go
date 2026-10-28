@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/db"
-	"github.com/acidiney/app.fidibeki/backend/internal/email"
+	"github.com/fidibeki/app.fidibeki/backend/internal/db"
+	"github.com/fidibeki/app.fidibeki/backend/internal/email"
 	"github.com/hibiken/asynq"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/testcontainers/testcontainers-go"
@@ -243,7 +243,7 @@ func TestControllerNotificationLifecycleIsRestrictedIdempotentAndRetryable(t *te
 	sender := &notificationTestSender{providerID: "resend-initial"}
 	handler := ControllerNotificationHandler{
 		Store: store, Sender: sender, From: "Fidibeki <updates@fidibeki.com>",
-		PublicBaseURL: "https://api.staging.fidibeki.com",
+		PublicBaseURL: "https://api.staging.example.test",
 		Now:           func() time.Time { return now.Add(time.Minute) },
 	}
 	if err := handler.Handler()(ctx, asynq.NewTask(TaskControllerNotification, payload)); err != nil {

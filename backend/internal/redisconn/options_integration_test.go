@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/redisconn"
+	"github.com/fidibeki/app.fidibeki/backend/internal/redisconn"
 	"github.com/hibiken/asynq"
 	"github.com/redis/go-redis/v9"
 	"github.com/testcontainers/testcontainers-go"

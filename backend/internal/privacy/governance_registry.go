@@ -230,8 +230,7 @@ func providerGovernanceRegistry() []ProviderGovernanceRecord {
 			GovernanceBoundaryServiceProvider,
 			"Analyze explicitly authorized feedback attachments or text for AI-assisted triage.",
 			[]string{"explicitly authorized feedback attachment media or text"},
-			"backend/internal/config/config.go (GeminiAPIKey); "+
-				"docs/superpowers/specs/2026-07-24-ai-privacy-governance-design.md",
+			"backend/internal/config/config.go (GeminiAPIKey)",
 			"GEMINI_API_KEY required only when APP_ENV=production; "+
 				"additionally gated per widget rule ai_processing.enabled",
 			GovernanceEnvironmentProductionOnly, "ai_provider_files",

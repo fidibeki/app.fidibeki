@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/db"
+	"github.com/fidibeki/app.fidibeki/backend/internal/db"
 	"github.com/google/uuid"
 )
 

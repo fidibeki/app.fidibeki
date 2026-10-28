@@ -4,7 +4,7 @@ import (
 	"crypto/tls"
 	"testing"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/cache"
+	"github.com/fidibeki/app.fidibeki/backend/internal/cache"
 )
 
 func TestOpenValidatesRedisURL(t *testing.T) {

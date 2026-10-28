@@ -4,8 +4,8 @@ import (
 	"errors"
 	"time"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/activity"
-	"github.com/acidiney/app.fidibeki/backend/internal/triage"
+	"github.com/fidibeki/app.fidibeki/backend/internal/activity"
+	"github.com/fidibeki/app.fidibeki/backend/internal/triage"
 )
 
 var (

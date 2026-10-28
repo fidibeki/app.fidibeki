@@ -9,9 +9,9 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/api"
-	"github.com/acidiney/app.fidibeki/backend/internal/email"
-	appmiddleware "github.com/acidiney/app.fidibeki/backend/internal/middleware"
+	"github.com/fidibeki/app.fidibeki/backend/internal/api"
+	"github.com/fidibeki/app.fidibeki/backend/internal/email"
+	appmiddleware "github.com/fidibeki/app.fidibeki/backend/internal/middleware"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )

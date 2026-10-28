@@ -18,7 +18,7 @@ import {
   Play,
 } from '@lucide/vue'
 import { formatPrice, plans, trialDays } from '~/data/pricing'
-import { customers, siteDescription, siteName } from '~/data/site'
+import { siteDescription, siteName } from '~/data/site'
 
 const links = useAppLinks()
 const config = useRuntimeConfig()
@@ -207,38 +207,6 @@ if (widgetTestimonialsKey) {
             </div>
           </article>
         </div>
-      </section>
-
-      <section
-        class="home-customer"
-        :aria-label="copy('Customers using Fidibeki')"
-      >
-        <p>
-          {{ copy('Helping teams listen.') }}<br />{{
-            copy('Including the people behind')
-          }}
-        </p>
-        <a
-          v-for="customer in customers"
-          :key="customer.name"
-          :href="customer.url"
-          target="_blank"
-          rel="noopener"
-          :aria-label="copy('Visit {name}', { name: customer.name })"
-          ><img
-            class="home-customer-light"
-            :src="customer.logoLight"
-            :alt="copy(customer.name)"
-            width="176"
-            height="48"
-            loading="lazy" /><img
-            class="home-customer-dark"
-            :src="customer.logoDark"
-            :alt="copy(customer.name)"
-            width="176"
-            height="48"
-            loading="lazy" /><ArrowUpRight :size="19" aria-hidden="true"
-        /></a>
       </section>
 
       <HomeIntegrations />

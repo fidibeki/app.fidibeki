@@ -9,11 +9,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/api"
-	"github.com/acidiney/app.fidibeki/backend/internal/config"
-	"github.com/acidiney/app.fidibeki/backend/internal/db"
-	"github.com/acidiney/app.fidibeki/backend/internal/storage"
-	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
+	"github.com/fidibeki/app.fidibeki/backend/internal/api"
+	"github.com/fidibeki/app.fidibeki/backend/internal/config"
+	"github.com/fidibeki/app.fidibeki/backend/internal/db"
+	"github.com/fidibeki/app.fidibeki/backend/internal/storage"
+	"github.com/fidibeki/app.fidibeki/backend/internal/tenant"
 )
 
 const (

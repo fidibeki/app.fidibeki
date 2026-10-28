@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/observability"
-	"github.com/acidiney/app.fidibeki/backend/internal/replay"
+	"github.com/fidibeki/app.fidibeki/backend/internal/observability"
+	"github.com/fidibeki/app.fidibeki/backend/internal/replay"
 	"github.com/getsentry/sentry-go"
 )
 

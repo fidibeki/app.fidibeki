@@ -48,7 +48,7 @@ Scope covers the entire marketing site. The user approved extending the homepage
 
 ## Colors
 
-White and charcoal carry the page. Gray distinguishes demonstrations from page content. The existing Tauview mark retains its green. A pale blue context example and a warm stone resolution example distinguish two product stories without recoloring the page. No decorative gradients, glows or grid wallpaper.
+White and charcoal carry the page. Gray distinguishes demonstrations from page content. A pale blue context example and a warm stone resolution example distinguish two product stories without recoloring the page. No decorative gradients, glows or grid wallpaper.
 
 ## Typography
 

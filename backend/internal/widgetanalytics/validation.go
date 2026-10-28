@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/project"
+	"github.com/fidibeki/app.fidibeki/backend/internal/project"
 	"github.com/google/uuid"
 )
 

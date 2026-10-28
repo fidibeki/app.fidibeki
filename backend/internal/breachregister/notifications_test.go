@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/outbox"
+	"github.com/fidibeki/app.fidibeki/backend/internal/outbox"
 )
 
 func TestNormalizeStageControllerNotificationInput(t *testing.T) {
@@ -77,7 +77,7 @@ func TestControllerNotificationMessageIsMinimizedAndProviderIdempotent(t *testin
 	}
 	message, err := controllerNotificationMessage(notification, ControllerNotificationHandler{
 		From:          "Fidibeki <updates@fidibeki.com>",
-		PublicBaseURL: "https://api.staging.fidibeki.com",
+		PublicBaseURL: "https://api.staging.example.test",
 	})
 	if err != nil {
 		t.Fatalf("controllerNotificationMessage() error = %v", err)

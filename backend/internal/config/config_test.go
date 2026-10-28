@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/config"
+	"github.com/fidibeki/app.fidibeki/backend/internal/config"
 )
 
 func TestConfigurationReportsEveryMissingRequiredValue(t *testing.T) {

@@ -15,11 +15,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/auth"
-	"github.com/acidiney/app.fidibeki/backend/internal/db"
-	"github.com/acidiney/app.fidibeki/backend/internal/email"
-	appmiddleware "github.com/acidiney/app.fidibeki/backend/internal/middleware"
-	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
+	"github.com/fidibeki/app.fidibeki/backend/internal/auth"
+	"github.com/fidibeki/app.fidibeki/backend/internal/db"
+	"github.com/fidibeki/app.fidibeki/backend/internal/email"
+	appmiddleware "github.com/fidibeki/app.fidibeki/backend/internal/middleware"
+	"github.com/fidibeki/app.fidibeki/backend/internal/tenant"
 	"github.com/go-chi/chi/v5"
 	"github.com/hibiken/asynq"
 	"github.com/jackc/pgx/v5"
@@ -176,15 +176,15 @@ func TestTenantAuthenticationInvitationAndPermissionsHTTPFlow(t *testing.T) {
 		Database: pools.Admin, Sender: welcomeSender,
 		PublicBaseURL: "http://api.localhost:8088", BaseDomain: "localhost",
 		AuthFrom:       "Fidibeki <auth@fidibeki.com>",
-		WelcomeFrom:    "Acidiney from Fidibeki <acidiney.dias@fidibeki.com>",
-		WelcomeReplyTo: "acidiney.dias@fidibeki.com", Now: func() time.Time { return now },
+		WelcomeFrom:    "Fidibeki <welcome@example.test>",
+		WelcomeReplyTo: "welcome@example.test", Now: func() time.Time { return now },
 	}.Handler()
 	for attempt := 0; attempt < 2; attempt++ {
 		if err := welcomeHandler(ctx, asynq.NewTask(email.TaskLifecycleEmail, welcomePayload)); err != nil {
 			t.Fatalf("founder welcome attempt %d: %v", attempt+1, err)
 		}
 	}
-	if len(welcomeSender.messages) != 1 || welcomeSender.messages[0].ReplyTo != "acidiney.dias@fidibeki.com" ||
+	if len(welcomeSender.messages) != 1 || welcomeSender.messages[0].ReplyTo != "welcome@example.test" ||
 		strings.Contains(welcomeSender.messages[0].Text, "token=") {
 		t.Fatalf("founder welcome messages = %#v", welcomeSender.messages)
 	}

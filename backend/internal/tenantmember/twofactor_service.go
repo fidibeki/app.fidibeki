@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/db"
-	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
-	"github.com/acidiney/app.fidibeki/backend/internal/twofactor"
+	"github.com/fidibeki/app.fidibeki/backend/internal/db"
+	"github.com/fidibeki/app.fidibeki/backend/internal/tenant"
+	"github.com/fidibeki/app.fidibeki/backend/internal/twofactor"
 )
 
 // TwoFactorStore is the persistence surface the two-factor service needs. It is

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/privacy"
+	"github.com/fidibeki/app.fidibeki/backend/internal/privacy"
 )
 
 // ProviderIncidentIntake is an immutable snapshot of an external provider

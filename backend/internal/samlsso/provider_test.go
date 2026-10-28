@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/auth"
+	"github.com/fidibeki/app.fidibeki/backend/internal/auth"
 )
 
 const (

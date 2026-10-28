@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/db"
+	"github.com/fidibeki/app.fidibeki/backend/internal/db"
 )
 
 var ErrInvalidCursor = errors.New("access audit cursor is invalid")

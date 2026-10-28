@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/auth"
-	appmiddleware "github.com/acidiney/app.fidibeki/backend/internal/middleware"
+	"github.com/fidibeki/app.fidibeki/backend/internal/auth"
+	appmiddleware "github.com/fidibeki/app.fidibeki/backend/internal/middleware"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )

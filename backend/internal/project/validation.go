@@ -11,9 +11,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/config"
-	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
-	"github.com/acidiney/app.fidibeki/backend/internal/widgetconfig"
+	"github.com/fidibeki/app.fidibeki/backend/internal/config"
+	"github.com/fidibeki/app.fidibeki/backend/internal/tenant"
+	"github.com/fidibeki/app.fidibeki/backend/internal/widgetconfig"
 )
 
 const publicKeyAlphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"

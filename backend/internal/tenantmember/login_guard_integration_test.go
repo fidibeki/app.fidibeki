@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/abuse"
-	"github.com/acidiney/app.fidibeki/backend/internal/ratelimit"
+	"github.com/fidibeki/app.fidibeki/backend/internal/abuse"
+	"github.com/fidibeki/app.fidibeki/backend/internal/ratelimit"
 	"github.com/redis/go-redis/v9"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"

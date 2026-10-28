@@ -14,10 +14,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/auth"
-	"github.com/acidiney/app.fidibeki/backend/internal/db"
-	appmiddleware "github.com/acidiney/app.fidibeki/backend/internal/middleware"
-	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
+	"github.com/fidibeki/app.fidibeki/backend/internal/auth"
+	"github.com/fidibeki/app.fidibeki/backend/internal/db"
+	appmiddleware "github.com/fidibeki/app.fidibeki/backend/internal/middleware"
+	"github.com/fidibeki/app.fidibeki/backend/internal/tenant"
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/testcontainers/testcontainers-go"
@@ -120,7 +120,7 @@ func TestProjectAndWidgetRuleHTTPFlow(t *testing.T) {
 	viewerToken, _, _ := jwtManager.IssueTenant(viewerID, acmeID, []string{string(auth.PermissionProjectRead)})
 	betaToken, _, _ := jwtManager.IssueTenant(betaMemberID, betaID, auth.TenantPermissionStrings())
 
-	store := Store{PublicBaseURL: "https://api.staging.fidibeki.com"}
+	store := Store{PublicBaseURL: "https://api.staging.example.test"}
 	routes := chi.NewRouter()
 	RegisterRoutes(routes, HTTPOptions{Store: store, JWT: jwtManager})
 	handler := appmiddleware.TenantTransaction(appmiddleware.TenantTransactionOptions{
@@ -314,7 +314,7 @@ func TestProjectAndWidgetRuleHTTPFlow(t *testing.T) {
 		publicConfiguration.Rules[0].LauncherVariant != LauncherVariantEdgeTab ||
 		publicConfiguration.Rules[0].Appearance.LogoURL == nil ||
 		*publicConfiguration.Rules[0].Appearance.LogoURL !=
-			"https://api.staging.fidibeki.com/v1/public/workspace-logo/"+
+			"https://api.staging.example.test/v1/public/workspace-logo/"+
 				acmeID+"/"+logoVersion+"/256.png" {
 		t.Errorf("public configuration = %#v", publicConfiguration)
 	}

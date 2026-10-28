@@ -15,10 +15,10 @@ func TestWriteEmailPreviews(t *testing.T) {
 		t.Fatalf("create email preview directory: %v", err)
 	}
 	handler := LifecycleHandler{
-		PublicBaseURL: "https://api.staging.fidibeki.com", BaseDomain: "staging.fidibeki.com",
+		PublicBaseURL: "https://api.staging.example.test", BaseDomain: "staging.example.test",
 		AuthFrom:       "Fidibeki <auth@fidibeki.com>",
-		WelcomeFrom:    "Acidiney from Fidibeki <acidiney.dias@fidibeki.com>",
-		WelcomeReplyTo: "acidiney.dias@fidibeki.com",
+		WelcomeFrom:    "Fidibeki <welcome@example.test>",
+		WelcomeReplyTo: "welcome@example.test",
 	}
 	previews := map[string]struct {
 		event     lifecycleEvent

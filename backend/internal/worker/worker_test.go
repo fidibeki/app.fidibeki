@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/email"
+	"github.com/fidibeki/app.fidibeki/backend/internal/email"
 	"github.com/hibiken/asynq"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"

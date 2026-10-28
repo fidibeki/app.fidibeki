@@ -8,11 +8,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/activity"
-	"github.com/acidiney/app.fidibeki/backend/internal/db"
-	"github.com/acidiney/app.fidibeki/backend/internal/feedback"
-	"github.com/acidiney/app.fidibeki/backend/internal/moderation"
-	"github.com/acidiney/app.fidibeki/backend/internal/triage"
+	"github.com/fidibeki/app.fidibeki/backend/internal/activity"
+	"github.com/fidibeki/app.fidibeki/backend/internal/db"
+	"github.com/fidibeki/app.fidibeki/backend/internal/feedback"
+	"github.com/fidibeki/app.fidibeki/backend/internal/moderation"
+	"github.com/fidibeki/app.fidibeki/backend/internal/triage"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )

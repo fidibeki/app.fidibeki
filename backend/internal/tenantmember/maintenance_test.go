@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/retentionhealth"
+	"github.com/fidibeki/app.fidibeki/backend/internal/retentionhealth"
 )
 
 func TestMaintainerDrainsBatchesUntilExhausted(t *testing.T) {

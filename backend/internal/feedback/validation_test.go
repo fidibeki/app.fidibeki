@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/project"
-	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
-	"github.com/acidiney/app.fidibeki/backend/internal/widgetapi"
+	"github.com/fidibeki/app.fidibeki/backend/internal/project"
+	"github.com/fidibeki/app.fidibeki/backend/internal/tenant"
+	"github.com/fidibeki/app.fidibeki/backend/internal/widgetapi"
 	"github.com/go-chi/chi/v5"
 )
 

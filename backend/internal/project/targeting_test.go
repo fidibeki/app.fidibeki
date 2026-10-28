@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
+	"github.com/fidibeki/app.fidibeki/backend/internal/tenant"
 )
 
 type targetingContract struct {

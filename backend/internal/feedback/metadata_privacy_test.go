@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/project"
-	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
+	"github.com/fidibeki/app.fidibeki/backend/internal/project"
+	"github.com/fidibeki/app.fidibeki/backend/internal/tenant"
 )
 
 func TestNormalizeSubmissionDiscardsRawReferrerAndUserAgent(t *testing.T) {

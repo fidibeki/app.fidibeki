@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/widgetconfig"
+	"github.com/fidibeki/app.fidibeki/backend/internal/widgetconfig"
 )
 
 var (

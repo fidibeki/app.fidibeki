@@ -1,4 +1,4 @@
--- Organization-scoped SAML 2.0 SSO (see plans/saml-sso.plan.md). Disabled by
+-- Organization-scoped SAML 2.0 SSO. Disabled by
 -- default: a tenant without a tenant_saml_configurations row behaves exactly as
 -- before. SAML authenticates identity only; Fidibeki permissions remain the
 -- authorization source, so nothing here grants a role.

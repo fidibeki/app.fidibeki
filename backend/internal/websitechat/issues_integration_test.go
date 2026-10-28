@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/auth"
-	"github.com/acidiney/app.fidibeki/backend/internal/db"
-	"github.com/acidiney/app.fidibeki/backend/internal/issue"
-	"github.com/acidiney/app.fidibeki/backend/internal/project"
+	"github.com/fidibeki/app.fidibeki/backend/internal/auth"
+	"github.com/fidibeki/app.fidibeki/backend/internal/db"
+	"github.com/fidibeki/app.fidibeki/backend/internal/issue"
+	"github.com/fidibeki/app.fidibeki/backend/internal/project"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )

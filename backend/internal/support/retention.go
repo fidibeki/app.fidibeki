@@ -6,8 +6,8 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/db"
-	"github.com/acidiney/app.fidibeki/backend/internal/retentionhealth"
+	"github.com/fidibeki/app.fidibeki/backend/internal/db"
+	"github.com/fidibeki/app.fidibeki/backend/internal/retentionhealth"
 )
 
 // Keep conversations for 180 days after the last message. A member-scoped

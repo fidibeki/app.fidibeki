@@ -123,7 +123,7 @@ useSiteMeta({
           <p>
             {{
               copy(
-                'For the purposes of these Terms, "Fidibeki", "we", "us", and "our" refer to the Fidibeki service operated by ACIDINEY ALVARO CARVALHO SOARES DIAS, an independent service provider established in Portugal. Fidibeki is the name of that service, not a company or a separate legal entity.',
+                'For the purposes of these Terms, "Fidibeki", "we", "us", and "our" refer to the legal entity or individual identified in the deployed terms of service. Configure the operator identity, jurisdiction, and contact details before deploying the service.',
               )
             }}
           </p>
@@ -163,7 +163,7 @@ useSiteMeta({
           <p>
             {{
               copy(
-                'Your counterparty is a person, not a company. The Fidibeki service is operated by ACIDINEY ALVARO CARVALHO SOARES DIAS, an independent service provider established in Portugal, who is the contracting party under these terms and carries the obligations in them personally. There is no separate legal entity behind the Fidibeki name, and none should be inferred from it.',
+                'Your counterparty is the legal entity or individual identified in the deployed terms of service. Do not use this template in production until that identity and its contact details have been completed.',
               )
             }}
           </p>
@@ -178,11 +178,13 @@ useSiteMeta({
             }}</a>
             {{ copy('and we will send them.') }}
           </p>
-          <address class="trader-address">
-            {{ copy('Travessa Quinta do Casal 18') }}<br />
-            {{ copy('3810-928 Aveiro') }}<br />
-            {{ copy('Portugal') }}
-          </address>
+          <p>
+            {{
+              copy(
+                'Configure the registered address and jurisdiction of the contracting operator before publishing these terms.',
+              )
+            }}
+          </p>
 
           <h2 id="eligibility">{{ copy('Who may use Fidibeki') }}</h2>
           <p>

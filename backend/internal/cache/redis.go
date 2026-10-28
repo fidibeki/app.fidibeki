@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/redisconn"
+	"github.com/fidibeki/app.fidibeki/backend/internal/redisconn"
 	"github.com/redis/go-redis/v9"
 )
 

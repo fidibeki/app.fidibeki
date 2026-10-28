@@ -3,8 +3,8 @@ package config_test
 import (
 	"testing"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/config"
-	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
+	"github.com/fidibeki/app.fidibeki/backend/internal/config"
+	"github.com/fidibeki/app.fidibeki/backend/internal/tenant"
 )
 
 func TestPlanDefinitionsMatchProductLimits(t *testing.T) {

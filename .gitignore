@@ -23,3 +23,14 @@ test-results/
 
 # Private CMO operations records; never commit contact or suppression data.
 .outreach-private/
+
+# Internal planning, QA evidence, and operational artefacts do not belong in
+# the public source distribution.
+.agents/
+dogfood-output/
+docs/evidence/
+docs/superpowers/
+marketing/.impeccable/
+ops/
+plans/
+screenshots/

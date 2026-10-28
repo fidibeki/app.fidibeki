@@ -114,7 +114,7 @@ useSiteMeta({
           <p>
             {{
               copy(
-                'Fidibeki is a service operated by ACIDINEY ALVARO CARVALHO SOARES DIAS, an independent service provider established in Portugal, who acts as the data controller for the Fidibeki website, accounts, and business administration data, except where Fidibeki processes personal data on behalf of its customers as a processor. Fidibeki is the name of the service, not a company or a separate legal entity. In this notice, “we”, “us”, and “our” mean that operator.',
+                'Fidibeki is operated by the legal entity or individual identified in the deployed privacy notice. That operator acts as controller for the Fidibeki website, accounts, and business administration data, except where Fidibeki processes personal data on behalf of its customers as a processor. Configure this notice with the operator identity and contact details before deploying the service.',
               )
             }}
           </p>

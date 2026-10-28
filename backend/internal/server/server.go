@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/api"
-	appmiddleware "github.com/acidiney/app.fidibeki/backend/internal/middleware"
-	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
+	"github.com/fidibeki/app.fidibeki/backend/internal/api"
+	appmiddleware "github.com/fidibeki/app.fidibeki/backend/internal/middleware"
+	"github.com/fidibeki/app.fidibeki/backend/internal/tenant"
 	"github.com/go-chi/chi/v5"
 )
 

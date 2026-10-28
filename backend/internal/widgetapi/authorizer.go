@@ -5,9 +5,9 @@ import (
 	"errors"
 	"time"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/db"
-	"github.com/acidiney/app.fidibeki/backend/internal/project"
-	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
+	"github.com/fidibeki/app.fidibeki/backend/internal/db"
+	"github.com/fidibeki/app.fidibeki/backend/internal/project"
+	"github.com/fidibeki/app.fidibeki/backend/internal/tenant"
 )
 
 var ErrAccessDenied = errors.New("widget access denied")

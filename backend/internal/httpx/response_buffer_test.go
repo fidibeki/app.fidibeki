@@ -5,7 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/httpx"
+	"github.com/fidibeki/app.fidibeki/backend/internal/httpx"
 )
 
 func TestResponseBufferDefersHeadersStatusAndBody(t *testing.T) {

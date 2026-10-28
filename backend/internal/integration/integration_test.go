@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/outboundhttp"
+	"github.com/fidibeki/app.fidibeki/backend/internal/outboundhttp"
 	"github.com/hibiken/asynq"
 )
 

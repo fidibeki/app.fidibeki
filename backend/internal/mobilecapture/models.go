@@ -3,8 +3,8 @@ package mobilecapture
 import (
 	"time"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/project"
-	"github.com/acidiney/app.fidibeki/backend/internal/widgetconfig"
+	"github.com/fidibeki/app.fidibeki/backend/internal/project"
+	"github.com/fidibeki/app.fidibeki/backend/internal/widgetconfig"
 )
 
 const (

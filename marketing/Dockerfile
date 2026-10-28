@@ -2,7 +2,7 @@ FROM node:24-alpine AS build
 
 ARG NUXT_PUBLIC_SITE_URL=https://fidibeki.com
 ARG NUXT_PUBLIC_APP_URL=https://fidibeki.com
-ARG NUXT_PUBLIC_DEMO_SCHEDULER_URL=https://cal.eu/acidiney.dias-fidibeki/30min
+ARG NUXT_PUBLIC_DEMO_SCHEDULER_URL=https://example.test/demo
 
 ARG NUXT_PUBLIC_UMAMI_SCRIPT_URL=https://cloud.umami.is/script.js
 ARG NUXT_PUBLIC_UMAMI_WEBSITE_ID=""

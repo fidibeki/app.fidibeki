@@ -14,8 +14,8 @@ import (
 	"log"
 	"time"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/auth"
-	"github.com/acidiney/app.fidibeki/backend/internal/storage"
+	"github.com/fidibeki/app.fidibeki/backend/internal/auth"
+	"github.com/fidibeki/app.fidibeki/backend/internal/storage"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
@@ -23,7 +23,7 @@ import (
 const (
 	databaseURL = "postgres://postgres:postgres@127.0.0.1:5433/fidibeki?sslmode=disable"
 	tenantSlug  = "acme"
-	memberEmail = "acidineydias@gmail.com"
+	memberEmail = "admin@example.test"
 )
 
 func main() {
@@ -71,7 +71,7 @@ func main() {
 	var memberID string
 	if err := connection.QueryRow(ctx, `
 		INSERT INTO tenant_members (tenant_id, email, name, permissions)
-		VALUES ($1, $2, 'Acidiney', $3)
+		VALUES ($1, $2, 'Fidibeki', $3)
 		ON CONFLICT (tenant_id, email) DO UPDATE SET permissions = $3
 		RETURNING id
 	`, tenantID, memberEmail, permissions).Scan(&memberID); err != nil {

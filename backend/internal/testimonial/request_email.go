@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/email"
-	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
+	"github.com/fidibeki/app.fidibeki/backend/internal/email"
+	"github.com/fidibeki/app.fidibeki/backend/internal/tenant"
 )
 
 type requestMessageInput struct {

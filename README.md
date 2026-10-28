@@ -4,7 +4,21 @@ Fidibeki is a multi-tenant feedback platform. The current foundation provides a 
 PostgreSQL row-level tenant isolation, PgBouncer, Redis, S3-compatible local storage, Caddy,
 an embeddable feedback widget, transactional feedback ingestion, queued work, and real-container tests.
 
-The authoritative implementation plan is [plans/fidibeki.plan.md](plans/fidibeki.plan.md).
+This repository contains the application source, local-development configuration,
+and public technical documentation. Internal plans, production evidence, and
+customer or prospect records are intentionally excluded.
+
+## Contributing and security
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development and pull-request guidance.
+Report vulnerabilities using the private process in [SECURITY.md](SECURITY.md),
+not through public issues.
+
+## License
+
+Fidibeki is licensed under the [GNU Affero General Public License v3.0](LICENSE).
+If you modify and run the software for users over a network, AGPL-3.0 requires
+you to offer those users the corresponding source code.
 
 ## Prerequisites
 

@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/api"
-	"github.com/acidiney/app.fidibeki/backend/internal/ratelimit"
+	"github.com/fidibeki/app.fidibeki/backend/internal/api"
+	"github.com/fidibeki/app.fidibeki/backend/internal/ratelimit"
 )
 
 const tenantAPIKeyRateLimitPeriod = time.Minute

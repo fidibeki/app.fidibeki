@@ -3,8 +3,8 @@ package emailfeedback
 import (
 	"time"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/project"
-	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
+	"github.com/fidibeki/app.fidibeki/backend/internal/project"
+	"github.com/fidibeki/app.fidibeki/backend/internal/tenant"
 )
 
 type InvitationCollection struct {

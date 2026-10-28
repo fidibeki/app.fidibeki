@@ -10,8 +10,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/api"
-	"github.com/acidiney/app.fidibeki/backend/internal/db"
+	"github.com/fidibeki/app.fidibeki/backend/internal/api"
+	"github.com/fidibeki/app.fidibeki/backend/internal/db"
 	"github.com/go-chi/chi/v5"
 )
 

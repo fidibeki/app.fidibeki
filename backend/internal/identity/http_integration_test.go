@@ -21,12 +21,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/auth"
-	"github.com/acidiney/app.fidibeki/backend/internal/db"
-	appmiddleware "github.com/acidiney/app.fidibeki/backend/internal/middleware"
-	"github.com/acidiney/app.fidibeki/backend/internal/ratelimit"
-	"github.com/acidiney/app.fidibeki/backend/internal/storage"
-	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
+	"github.com/fidibeki/app.fidibeki/backend/internal/auth"
+	"github.com/fidibeki/app.fidibeki/backend/internal/db"
+	appmiddleware "github.com/fidibeki/app.fidibeki/backend/internal/middleware"
+	"github.com/fidibeki/app.fidibeki/backend/internal/ratelimit"
+	"github.com/fidibeki/app.fidibeki/backend/internal/storage"
+	"github.com/fidibeki/app.fidibeki/backend/internal/tenant"
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/testcontainers/testcontainers-go"
@@ -116,7 +116,7 @@ func TestIdentityHTTPAssetLifecycle(t *testing.T) {
 	routes := chi.NewRouter()
 	RegisterTenantRoutes(routes, HTTPOptions{
 		Store: store, JWT: jwtManager, Storage: objects, Limiter: limiter,
-		PublicBaseURL: "https://api.staging.fidibeki.com",
+		PublicBaseURL: "https://api.staging.example.test",
 	})
 	handler := appmiddleware.TenantTransaction(appmiddleware.TenantTransactionOptions{
 		BaseDomain: "localhost", Resolver: tenant.PostgresResolver{Admin: pools.Admin},

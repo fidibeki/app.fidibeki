@@ -15,11 +15,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/config"
-	"github.com/acidiney/app.fidibeki/backend/internal/moderation"
-	"github.com/acidiney/app.fidibeki/backend/internal/outboundhttp"
-	"github.com/acidiney/app.fidibeki/backend/internal/privacy"
-	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
+	"github.com/fidibeki/app.fidibeki/backend/internal/config"
+	"github.com/fidibeki/app.fidibeki/backend/internal/moderation"
+	"github.com/fidibeki/app.fidibeki/backend/internal/outboundhttp"
+	"github.com/fidibeki/app.fidibeki/backend/internal/privacy"
+	"github.com/fidibeki/app.fidibeki/backend/internal/tenant"
 	"github.com/hibiken/asynq"
 	"github.com/jackc/pgx/v5"
 )

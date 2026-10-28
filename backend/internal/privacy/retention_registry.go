@@ -6,8 +6,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/config"
-	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
+	"github.com/fidibeki/app.fidibeki/backend/internal/config"
+	"github.com/fidibeki/app.fidibeki/backend/internal/tenant"
 )
 
 const retentionRegistryVersion = 1

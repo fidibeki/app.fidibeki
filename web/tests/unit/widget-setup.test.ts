@@ -35,8 +35,8 @@ describe('widget setup helpers', () => {
   })
 
   it('uses the configured environment widget host', () => {
-    expect(widgetEmbedCode('pk_live_key', 'staging.fidibeki.com'))
-      .toContain('https://widget.staging.fidibeki.com/v1/loader.js')
+    expect(widgetEmbedCode('pk_live_key', 'staging.example.test'))
+      .toContain('https://widget.staging.example.test/v1/loader.js')
     expect(widgetEmbedCode('pk_live_key', 'localhost'))
       .toContain('http://widget.localhost:8088/v1/loader.js')
   })

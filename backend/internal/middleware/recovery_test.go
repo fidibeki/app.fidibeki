@@ -9,7 +9,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	appmiddleware "github.com/acidiney/app.fidibeki/backend/internal/middleware"
+	appmiddleware "github.com/fidibeki/app.fidibeki/backend/internal/middleware"
 	"github.com/go-chi/chi/v5"
 )
 

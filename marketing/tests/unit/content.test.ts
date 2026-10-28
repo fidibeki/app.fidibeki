@@ -4,7 +4,7 @@ import { integrations, integrationSlugs } from '~/data/integrations'
 import { useCases, useCaseSlugs } from '~/data/use-cases'
 import { docs, docSlugs } from '~/data/docs'
 import { plans } from '~/data/pricing'
-import { customers, footerGroups, marketingRoutes, primaryNav } from '~/data/site'
+import { footerGroups, marketingRoutes, primaryNav } from '~/data/site'
 
 function assertUnique(values: string[], label: string) {
   const duplicates = values.filter((value, index) => values.indexOf(value) !== index)
@@ -149,16 +149,6 @@ describe('content integrity', () => {
     const code = installation!.sections.flatMap((section) => section.code?.snippet ?? [])
     expect(code.join('\n')).toContain('widget.fidibeki.com/v1/loader.js')
     expect(code.join('\n')).toContain('data-fidibeki-key')
-  })
-
-  it('lists only complete customer entries', () => {
-    expect(customers.length).toBeGreaterThan(0)
-    for (const customer of customers) {
-      expect(customer.name.length).toBeGreaterThan(1)
-      expect(customer.url).toMatch(/^https:\/\//)
-      expect(customer.logoLight).toMatch(/^\/customers\//)
-      expect(customer.logoDark).toMatch(/^\/customers\//)
-    }
   })
 
   it('has exactly four plans in ascending price order', () => {

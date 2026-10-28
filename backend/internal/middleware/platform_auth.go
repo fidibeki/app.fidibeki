@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/api"
-	"github.com/acidiney/app.fidibeki/backend/internal/auth"
+	"github.com/fidibeki/app.fidibeki/backend/internal/api"
+	"github.com/fidibeki/app.fidibeki/backend/internal/auth"
 )
 
 type accessTokenVerifier interface {

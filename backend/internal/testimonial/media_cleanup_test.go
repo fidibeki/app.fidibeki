@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/storage"
+	"github.com/fidibeki/app.fidibeki/backend/internal/storage"
 )
 
 func TestMediaCleanupRemovesAbandonedTerminalAndOrphanedSources(t *testing.T) {

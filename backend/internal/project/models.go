@@ -3,8 +3,8 @@ package project
 import (
 	"time"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
-	"github.com/acidiney/app.fidibeki/backend/internal/widgetconfig"
+	"github.com/fidibeki/app.fidibeki/backend/internal/tenant"
+	"github.com/fidibeki/app.fidibeki/backend/internal/widgetconfig"
 )
 
 type MatcherType string

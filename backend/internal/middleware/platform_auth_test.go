@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/auth"
-	appmiddleware "github.com/acidiney/app.fidibeki/backend/internal/middleware"
+	"github.com/fidibeki/app.fidibeki/backend/internal/auth"
+	appmiddleware "github.com/fidibeki/app.fidibeki/backend/internal/middleware"
 )
 
 func TestRequirePlatformAdminEnforcesAudienceAndPermission(t *testing.T) {

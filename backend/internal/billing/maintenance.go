@@ -7,7 +7,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/email"
+	"github.com/fidibeki/app.fidibeki/backend/internal/email"
 )
 
 type PrefixDeleter interface {

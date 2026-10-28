@@ -2,3 +2,15 @@ title = "Fidibeki Gitleaks configuration"
 
 [extend]
 useDefault = true
+
+# These files contain deterministic values that exercise redaction, encryption,
+# and token-validation paths. They are synthetic fixtures, not credentials.
+# Keeping the allowlist narrow lets the default rules keep scanning application
+# code, configuration, and documentation.
+[allowlist]
+paths = [
+  '''(^|/)\.env\.example$''',
+  '''(^|/)backend/internal/(abuse/abuse_test|config/config_test|emailfeedback/http_integration_test|feedback/http_integration_test|integration/integration_test|issue/issue_test|middleware/proxy_host_test|mobilecapture/http_integration_test|replay/http_integration_test|server/server_test|tenantmember/twofactor_integration_test|twofactor/twofactor_test)\.go$''',
+  '''(^|/)marketing/(i18n/locales/en\.json|pages/dpa\.vue)$''',
+  '''(^|/)web/tests/e2e/email-feedback-(form|opt-out)\.spec\.ts$''',
+]

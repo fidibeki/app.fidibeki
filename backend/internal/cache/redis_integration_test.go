@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/cache"
+	"github.com/fidibeki/app.fidibeki/backend/internal/cache"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 )

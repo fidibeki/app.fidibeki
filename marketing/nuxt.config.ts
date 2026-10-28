@@ -71,7 +71,7 @@ export default defineNuxtConfig({
       appUrl,
       demoSchedulerUrl:
         process.env.NUXT_PUBLIC_DEMO_SCHEDULER_URL ||
-        'https://cal.eu/acidiney.dias-fidibeki/30min',
+        'https://example.test/demo',
       umamiScriptUrl:
         process.env.NUXT_PUBLIC_UMAMI_SCRIPT_URL ||
         'https://cloud.umami.is/script.js',

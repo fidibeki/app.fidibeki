@@ -3,7 +3,7 @@ package tenantmember
 import (
 	"testing"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
+	"github.com/fidibeki/app.fidibeki/backend/internal/tenant"
 )
 
 func TestNormalizeMemberLocale(t *testing.T) {

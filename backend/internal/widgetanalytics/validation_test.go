@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/project"
+	"github.com/fidibeki/app.fidibeki/backend/internal/project"
 )
 
 func TestValidateEventsCanonicalizesAndSnapshotsMatchedEvent(t *testing.T) {

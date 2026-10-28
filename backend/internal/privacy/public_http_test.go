@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/ratelimit"
+	"github.com/fidibeki/app.fidibeki/backend/internal/ratelimit"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -43,15 +43,15 @@ func TestReporterVerificationMessageUsesTenantURLAndRotatedIdempotency(t *testin
 	}
 	message, err := reporterVerificationMessage(
 		request, "Acme", "acme", strings.Repeat("a", 43), HTTPOptions{
-			PublicBaseURL: "https://api.staging.fidibeki.com",
-			BaseDomain:    "staging.fidibeki.com", From: "Fidibeki <auth@fidibeki.com>",
+			PublicBaseURL: "https://api.staging.example.test",
+			BaseDomain:    "staging.example.test", From: "Fidibeki <auth@fidibeki.com>",
 		},
 	)
 	if err != nil {
 		t.Fatalf("reporterVerificationMessage() error = %v", err)
 	}
 	if message.To != emailAddress || !strings.Contains(message.Text,
-		"https://acme.staging.fidibeki.com/privacy/"+strings.Repeat("a", 43)) ||
+		"https://acme.staging.example.test/privacy/"+strings.Repeat("a", 43)) ||
 		!strings.Contains(message.Text, "Confirm anonymization") ||
 		!strings.HasPrefix(message.IdempotencyKey, "privacy-verification:request-id:") {
 		t.Fatalf("verification message = %#v text=%s", message, message.Text)
@@ -169,8 +169,8 @@ func TestPrivacyHandlersRejectMissingContextAndInvalidEmailConfiguration(t *test
 		ReporterRequest{ID: "request", Action: ReporterExport},
 		"Acme", "acme", strings.Repeat("a", 43),
 		HTTPOptions{
-			PublicBaseURL: "https://api.staging.fidibeki.com",
-			BaseDomain:    "staging.fidibeki.com",
+			PublicBaseURL: "https://api.staging.example.test",
+			BaseDomain:    "staging.example.test",
 		},
 	)
 	if err == nil || !strings.Contains(err.Error(), "email is unavailable") {

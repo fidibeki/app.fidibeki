@@ -3,7 +3,7 @@ package samlsso
 import (
 	"net/url"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
+	"github.com/fidibeki/app.fidibeki/backend/internal/tenant"
 )
 
 // Paths are relative to the tenant's own host. They live under /auth/ so the

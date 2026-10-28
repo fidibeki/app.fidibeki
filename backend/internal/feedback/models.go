@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/replay"
-	"github.com/acidiney/app.fidibeki/backend/internal/triage"
-	"github.com/acidiney/app.fidibeki/backend/internal/widgetanalytics"
+	"github.com/fidibeki/app.fidibeki/backend/internal/replay"
+	"github.com/fidibeki/app.fidibeki/backend/internal/triage"
+	"github.com/fidibeki/app.fidibeki/backend/internal/widgetanalytics"
 )
 
 type Status string

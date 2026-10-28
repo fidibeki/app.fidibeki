@@ -20,11 +20,11 @@ describe('workspace URL helpers', () => {
   })
 
   it('builds environment-correct public and tenant URLs', () => {
-    const staging = new URL('https://staging.fidibeki.com/signup')
-    expect(baseDomainURL('staging.fidibeki.com', '/signup', staging))
-      .toBe('https://staging.fidibeki.com/signup')
-    expect(workspaceLoginURL('acme', 'staging.fidibeki.com', staging))
-      .toBe('https://acme.staging.fidibeki.com/login')
+    const staging = new URL('https://staging.example.test/signup')
+    expect(baseDomainURL('staging.example.test', '/signup', staging))
+      .toBe('https://staging.example.test/signup')
+    expect(workspaceLoginURL('acme', 'staging.example.test', staging))
+      .toBe('https://acme.staging.example.test/login')
 
     const local = new URL('http://acme.localhost:4321/login')
     expect(baseDomainURL('localhost', '/signup', local)).toBe('http://localhost:4321/signup')
@@ -32,8 +32,8 @@ describe('workspace URL helpers', () => {
   })
 
   it('distinguishes the environment root from tenant hosts', () => {
-    expect(isBaseDomainHost('staging.fidibeki.com', 'staging.fidibeki.com')).toBe(true)
-    expect(isBaseDomainHost('acme.staging.fidibeki.com', 'staging.fidibeki.com')).toBe(false)
+    expect(isBaseDomainHost('staging.example.test', 'staging.example.test')).toBe(true)
+    expect(isBaseDomainHost('acme.staging.example.test', 'staging.example.test')).toBe(false)
   })
 
   it('supports an application entry origin separate from the tenant base domain', () => {
@@ -50,11 +50,11 @@ describe('workspace URL helpers', () => {
   })
 
   it('suggests a slug only for a valid direct subdomain of the configured base domain', () => {
-    expect(workspaceSlugFromStandardHost('acme.staging.fidibeki.com', 'staging.fidibeki.com')).toBe('acme')
+    expect(workspaceSlugFromStandardHost('acme.staging.example.test', 'staging.example.test')).toBe('acme')
     expect(workspaceSlugFromStandardHost('acme.localhost', 'localhost')).toBe('acme')
-    expect(workspaceSlugFromStandardHost('custom.example.com', 'staging.fidibeki.com')).toBeNull()
-    expect(workspaceSlugFromStandardHost('one.two.staging.fidibeki.com', 'staging.fidibeki.com')).toBeNull()
-    expect(workspaceSlugFromStandardHost('api.staging.fidibeki.com', 'staging.fidibeki.com')).toBeNull()
-    expect(workspaceSlugFromStandardHost('staging.fidibeki.com', 'staging.fidibeki.com')).toBeNull()
+    expect(workspaceSlugFromStandardHost('custom.example.com', 'staging.example.test')).toBeNull()
+    expect(workspaceSlugFromStandardHost('one.two.staging.example.test', 'staging.example.test')).toBeNull()
+    expect(workspaceSlugFromStandardHost('api.staging.example.test', 'staging.example.test')).toBeNull()
+    expect(workspaceSlugFromStandardHost('staging.example.test', 'staging.example.test')).toBeNull()
   })
 })

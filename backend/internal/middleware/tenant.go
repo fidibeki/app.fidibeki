@@ -8,10 +8,10 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/api"
-	"github.com/acidiney/app.fidibeki/backend/internal/db"
-	"github.com/acidiney/app.fidibeki/backend/internal/httpx"
-	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
+	"github.com/fidibeki/app.fidibeki/backend/internal/api"
+	"github.com/fidibeki/app.fidibeki/backend/internal/db"
+	"github.com/fidibeki/app.fidibeki/backend/internal/httpx"
+	"github.com/fidibeki/app.fidibeki/backend/internal/tenant"
 )
 
 type tenantContextKey struct{}

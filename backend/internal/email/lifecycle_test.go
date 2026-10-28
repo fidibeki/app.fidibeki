@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/outbox"
+	"github.com/fidibeki/app.fidibeki/backend/internal/outbox"
 )
 
 func TestLifecycleResolverRoutesOnlyTenantEmailEvents(t *testing.T) {
@@ -32,8 +32,8 @@ func TestLifecycleMessagesCoverFounderAndBillingTransitions(t *testing.T) {
 	handler := LifecycleHandler{
 		PublicBaseURL: "https://api.fidibeki.com", BaseDomain: "fidibeki.com",
 		AuthFrom:       "Fidibeki <auth@fidibeki.com>",
-		WelcomeFrom:    "Acidiney from Fidibeki <acidiney.dias@fidibeki.com>",
-		WelcomeReplyTo: "acidiney.dias@fidibeki.com",
+		WelcomeFrom:    "Fidibeki <welcome@example.test>",
+		WelcomeReplyTo: "welcome@example.test",
 	}
 	welcome, err := handler.message(lifecycleEvent{
 		ID: "welcome-event", TenantID: "tenant", TenantName: "Acme", TenantSlug: "acme",
@@ -43,8 +43,8 @@ func TestLifecycleMessagesCoverFounderAndBillingTransitions(t *testing.T) {
 		t.Fatalf("welcome message error = %v", err)
 	}
 	if welcome.Subject != "Welcome to Fidibeki" ||
-		welcome.From != "Acidiney from Fidibeki <acidiney.dias@fidibeki.com>" ||
-		welcome.ReplyTo != "acidiney.dias@fidibeki.com" || strings.Contains(welcome.Text, "token=") ||
+		welcome.From != "Fidibeki <welcome@example.test>" ||
+		welcome.ReplyTo != "welcome@example.test" || strings.Contains(welcome.Text, "token=") ||
 		!strings.Contains(welcome.Text, "I'm Acidiney") ||
 		!strings.Contains(welcome.Text, "https://acme.fidibeki.com/getting-started") ||
 		len(welcome.IdempotencyKey) > 256 || strings.Contains(welcome.IdempotencyKey, "owner@acme.test") {

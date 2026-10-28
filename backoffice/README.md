@@ -61,7 +61,7 @@ Run this once per environment after migrations succeed:
 
 ```sh
 docker compose -f infra/docker-compose.yml run --rm api \
-  admin bootstrap --email acidiney.dias@fidibeki.com
+  admin bootstrap --email admin@example.test
 ```
 
 The command is idempotent and grants the complete platform permission set. It

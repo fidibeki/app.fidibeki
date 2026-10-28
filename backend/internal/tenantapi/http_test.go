@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
+	"github.com/fidibeki/app.fidibeki/backend/internal/tenant"
 )
 
 func TestConfigReturnsTenantPlanLimitsAndFeatures(t *testing.T) {

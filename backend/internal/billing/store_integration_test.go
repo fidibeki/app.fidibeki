@@ -15,11 +15,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/auth"
-	"github.com/acidiney/app.fidibeki/backend/internal/db"
-	"github.com/acidiney/app.fidibeki/backend/internal/email"
-	appmiddleware "github.com/acidiney/app.fidibeki/backend/internal/middleware"
-	"github.com/acidiney/app.fidibeki/backend/internal/tenant"
+	"github.com/fidibeki/app.fidibeki/backend/internal/auth"
+	"github.com/fidibeki/app.fidibeki/backend/internal/db"
+	"github.com/fidibeki/app.fidibeki/backend/internal/email"
+	appmiddleware "github.com/fidibeki/app.fidibeki/backend/internal/middleware"
+	"github.com/fidibeki/app.fidibeki/backend/internal/tenant"
 	"github.com/go-chi/chi/v5"
 	"github.com/hibiken/asynq"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -137,8 +137,8 @@ func TestStoreBillingLifecycle(t *testing.T) {
 		Database: pool, Sender: billingSender,
 		PublicBaseURL: "https://api.fidibeki.com", BaseDomain: "fidibeki.com",
 		AuthFrom:       "Fidibeki <auth@fidibeki.com>",
-		WelcomeFrom:    "Acidiney from Fidibeki <acidiney.dias@fidibeki.com>",
-		WelcomeReplyTo: "acidiney.dias@fidibeki.com", Now: func() time.Time { return now },
+		WelcomeFrom:    "Fidibeki <welcome@example.test>",
+		WelcomeReplyTo: "welcome@example.test", Now: func() time.Time { return now },
 	}.Handler()
 	billingPayload, _ := json.Marshal(map[string]string{
 		"outbox_event_id": paidEventID, "tenant_id": loaded.ID, "resource_id": loaded.ID,
@@ -197,8 +197,8 @@ func TestStoreBillingLifecycle(t *testing.T) {
 		Database: pool, Sender: cancellationSender,
 		PublicBaseURL: "https://api.fidibeki.com", BaseDomain: "fidibeki.com",
 		AuthFrom:       "Fidibeki <auth@fidibeki.com>",
-		WelcomeFrom:    "Acidiney from Fidibeki <acidiney.dias@fidibeki.com>",
-		WelcomeReplyTo: "acidiney.dias@fidibeki.com", Now: func() time.Time { return now },
+		WelcomeFrom:    "Fidibeki <welcome@example.test>",
+		WelcomeReplyTo: "welcome@example.test", Now: func() time.Time { return now },
 	}.Handler()
 	if err := cancellationHandler(ctx, asynq.NewTask(email.TaskLifecycleEmail, cancellationPayload)); err != nil {
 		t.Fatalf("send deletion cancellation email: %v", err)

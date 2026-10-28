@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"testing"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/logging"
+	"github.com/fidibeki/app.fidibeki/backend/internal/logging"
 )
 
 func TestLoggerRedactsPIIAndSecrets(t *testing.T) {

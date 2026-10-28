@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/db"
+	"github.com/fidibeki/app.fidibeki/backend/internal/db"
 	"github.com/redis/go-redis/v9"
 )
 

@@ -85,7 +85,7 @@ test('book a demo buttons link directly to the scheduling page', async ({
   for (const route of ['/', '/pricing']) {
     const html = await (await request.get(route)).text()
     expect(html, route).toContain(
-      'href="https://cal.eu/acidiney.dias-fidibeki/30min"',
+      'href="https://example.test/demo"',
     )
   }
 })

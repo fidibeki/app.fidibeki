@@ -7,9 +7,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/feedback"
-	"github.com/acidiney/app.fidibeki/backend/internal/project"
-	"github.com/acidiney/app.fidibeki/backend/internal/widgetapi"
+	"github.com/fidibeki/app.fidibeki/backend/internal/feedback"
+	"github.com/fidibeki/app.fidibeki/backend/internal/project"
+	"github.com/fidibeki/app.fidibeki/backend/internal/widgetapi"
 	"github.com/google/uuid"
 )
 

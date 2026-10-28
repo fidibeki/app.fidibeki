@@ -13,7 +13,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/outboundhttp"
+	"github.com/fidibeki/app.fidibeki/backend/internal/outboundhttp"
 )
 
 // HTTPDoer is the seam every provider client is built on so tests can drive them against an

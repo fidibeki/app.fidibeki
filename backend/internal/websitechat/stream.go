@@ -3,8 +3,8 @@ package websitechat
 import (
 	"context"
 	"fmt"
-	"github.com/acidiney/app.fidibeki/backend/internal/auth"
-	"github.com/acidiney/app.fidibeki/backend/internal/widgetapi"
+	"github.com/fidibeki/app.fidibeki/backend/internal/auth"
+	"github.com/fidibeki/app.fidibeki/backend/internal/widgetapi"
 	"net/http"
 	"time"
 )

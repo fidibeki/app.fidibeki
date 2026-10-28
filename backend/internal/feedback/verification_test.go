@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/Eyevinn/mp4ff/mp4"
-	"github.com/acidiney/app.fidibeki/backend/internal/abuse"
+	"github.com/fidibeki/app.fidibeki/backend/internal/abuse"
 	"github.com/hibiken/asynq"
 )
 

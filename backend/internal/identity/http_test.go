@@ -12,9 +12,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/ratelimit"
-	"github.com/acidiney/app.fidibeki/backend/internal/retentionhealth"
-	"github.com/acidiney/app.fidibeki/backend/internal/storage"
+	"github.com/fidibeki/app.fidibeki/backend/internal/ratelimit"
+	"github.com/fidibeki/app.fidibeki/backend/internal/retentionhealth"
+	"github.com/fidibeki/app.fidibeki/backend/internal/storage"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
@@ -138,10 +138,10 @@ func TestIdentityObjectKeysAndWorkspaceLogoURLs(t *testing.T) {
 	}
 
 	logoURL, err := WorkspaceLogoURL(
-		"https://api.staging.fidibeki.com/base?old=true#fragment",
+		"https://api.staging.example.test/base?old=true#fragment",
 		tenantID, version, 256,
 	)
-	wantURL := "https://api.staging.fidibeki.com/v1/public/workspace-logo/" +
+	wantURL := "https://api.staging.example.test/v1/public/workspace-logo/" +
 		tenantID + "/" + version + "/256.png"
 	if err != nil || logoURL != wantURL {
 		t.Fatalf("workspace logo URL = %q, error = %v, want %q", logoURL, err, wantURL)

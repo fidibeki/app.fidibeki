@@ -345,8 +345,7 @@ func processingActivityRegistry() []ProcessingActivityRecord {
 			},
 			RetentionCategories: []string{"session_replays"},
 			SecurityControls: []string{
-				"Structural anonymous-event contract validated before promotion and merge " +
-					"(docs/superpowers/specs/2026-07-23-replay-identity-threat-model.md)",
+				"Structural anonymous-event contract validated before promotion and merge",
 				"Consent-gated capture with independent backend enforcement",
 			},
 			LawfulBasis: LawfulBasisPending, LawfulBasisReason: lawfulBasisReasonProcessor,
@@ -354,8 +353,7 @@ func processingActivityRegistry() []ProcessingActivityRecord {
 			DPIA: DPIAScreening{
 				RiskIndicators: []DPIARiskIndicator{DPIARiskSystematicMonitoring},
 				Outcome:        DPIAOutcomePending,
-				Reason: "Session replay observes a visitor's interactions across a session " +
-					"(docs/superpowers/specs/2026-07-23-replay-identity-threat-model.md); a " +
+				Reason: "Session replay observes a visitor's interactions across a session; a " +
 					"privacy-owner DPIA screening decision has not been recorded. Engineering cannot " +
 					"determine the legal threshold alone.",
 				Owner: governanceUnassigned,

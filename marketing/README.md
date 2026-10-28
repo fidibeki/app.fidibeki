@@ -22,7 +22,7 @@ pnpm typecheck:marketing
 | --- | --- | --- |
 | `NUXT_PUBLIC_SITE_URL` | `https://fidibeki.com` | Canonical origin used for metadata and the sitemap. |
 | `NUXT_PUBLIC_APP_URL` | `https://fidibeki.com` | Where sign-in (`/login`) and sign-up (`/signup`) link. Production sets this to `https://app.fidibeki.com`; configure it explicitly for other environments. |
-| `NUXT_PUBLIC_DEMO_SCHEDULER_URL` | `https://cal.eu/acidiney.dias-fidibeki/30min` | External scheduling link — every "Book a demo" button opens it directly in a new tab. |
+| `NUXT_PUBLIC_DEMO_SCHEDULER_URL` | `https://example.test/demo` | External scheduling link. Set a real URL for a deployed site. |
 | `NUXT_PUBLIC_UMAMI_SCRIPT_URL` | `https://cloud.umami.is/script.js` | Umami analytics script location. |
 | `NUXT_PUBLIC_UMAMI_WEBSITE_ID` | `1d518b00-…` | Umami website id. Analytics load only after the visitor accepts the consent banner; set empty to disable entirely. |
 | `NUXT_PUBLIC_WIDGET_SCRIPT_URL` | `https://widget.fidibeki.com/v1/loader.js` | Fidibeki widget loader script location. |

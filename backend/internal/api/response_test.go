@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/api"
+	"github.com/fidibeki/app.fidibeki/backend/internal/api"
 )
 
 func TestWriteErrorUsesTheStableEnvelope(t *testing.T) {

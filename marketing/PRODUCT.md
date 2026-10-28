@@ -28,7 +28,7 @@ Preserve the Fidibeki name and existing mark. The user chose OpenAI's marketing 
 
 ## Evidence on Hand
 
-`data/features.ts`, `data/pricing.ts`, `data/site.ts` and `data/integrations.ts` contain existing facts and destinations. Tauview is the confirmed customer in the existing catalog. Local brand assets live in `public/brand`. Product demonstrations must be identified as examples. No new customer quotation has been supplied.
+`data/features.ts`, `data/pricing.ts`, `data/site.ts` and `data/integrations.ts` contain the product content. Local brand assets live in `public/brand`. Product demonstrations must be identified as examples. Do not add customer names, logos, or quotations without documented permission.
 
 ## Product Principles
 

@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/server"
+	"github.com/fidibeki/app.fidibeki/backend/internal/server"
 )
 
 type readinessCheckFunc func(context.Context) error

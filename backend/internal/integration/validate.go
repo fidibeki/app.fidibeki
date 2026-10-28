@@ -9,7 +9,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/outboundhttp"
+	"github.com/fidibeki/app.fidibeki/backend/internal/outboundhttp"
 )
 
 type ValidationOptions struct {

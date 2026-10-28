@@ -11,9 +11,8 @@ the active environment and workspace; templates do not accept arbitrary HTML or 
 | Authentication, billing, account, and reporter messages | `RESEND_AUTH_FROM` | Provider default |
 | One-time founder welcome | `RESEND_WELCOME_FROM` | `RESEND_WELCOME_REPLY_TO` |
 
-The founder address must be verified with the configured provider before enabling Resend delivery.
-The default identity is `Acidiney from Fidibeki <acidiney.dias@fidibeki.com>` and replies go to the
-same monitored address.
+The configured welcome sender must be verified with the provider before enabling Resend delivery.
+Set `RESEND_WELCOME_FROM` and `RESEND_WELCOME_REPLY_TO` to monitored addresses for the deployment.
 
 ## Inventory and delivery policy
 

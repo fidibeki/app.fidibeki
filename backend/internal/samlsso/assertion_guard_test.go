@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/abuse"
-	"github.com/acidiney/app.fidibeki/backend/internal/ratelimit"
+	"github.com/fidibeki/app.fidibeki/backend/internal/abuse"
+	"github.com/fidibeki/app.fidibeki/backend/internal/ratelimit"
 )
 
 const assertionGuardTestSecret = "saml-assertion-guard-test-secret-at-least-32-bytes"

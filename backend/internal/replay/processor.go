@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/privacy"
-	"github.com/acidiney/app.fidibeki/backend/internal/storage"
+	"github.com/fidibeki/app.fidibeki/backend/internal/privacy"
+	"github.com/fidibeki/app.fidibeki/backend/internal/storage"
 	"github.com/hibiken/asynq"
 )
 

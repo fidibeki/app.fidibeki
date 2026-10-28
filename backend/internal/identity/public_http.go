@@ -4,7 +4,7 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/api"
+	"github.com/fidibeki/app.fidibeki/backend/internal/api"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )

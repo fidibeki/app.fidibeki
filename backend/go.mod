@@ -1,4 +1,4 @@
-module github.com/acidiney/app.fidibeki/backend
+module github.com/fidibeki/app.fidibeki/backend
 
 go 1.25.0
 

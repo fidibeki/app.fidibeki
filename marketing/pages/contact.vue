@@ -166,59 +166,6 @@ const specialistIcons = {
       </div>
     </section>
 
-    <section class="section imprint-section">
-      <div class="container">
-        <div class="imprint">
-          <span class="imprint-label">{{
-            copy('Who you are contacting')
-          }}</span>
-          <p class="imprint-lede">
-            {{ copy('Fidibeki is a service operated by') }}
-            <strong>{{ copy('ACIDINEY ALVARO CARVALHO SOARES DIAS') }}</strong
-            >{{
-              copy(
-                ', an independent service provider established in Portugal. Fidibeki is the name of the service, not a company or a separate legal entity.',
-              )
-            }}
-          </p>
-          <div class="imprint-grid">
-            <div class="imprint-field">
-              <span class="imprint-key">{{ copy('Established') }}</span>
-              <address class="imprint-value">
-                {{ copy('Travessa Quinta do Casal 18') }}<br />
-                {{ copy('3810-928 Aveiro') }}<br />
-                {{ copy('Portugal') }}
-              </address>
-            </div>
-            <div class="imprint-field">
-              <span class="imprint-key">{{
-                copy('Tax and registration')
-              }}</span>
-              <p class="imprint-value">
-                {{ copy('On every invoice we issue, and on request.') }}
-              </p>
-            </div>
-            <div class="imprint-field">
-              <span class="imprint-key">{{ copy('The paperwork') }}</span>
-              <p class="imprint-value">
-                <NuxtLinkLocale to="/tos">{{
-                  copy('Terms of service')
-                }}</NuxtLinkLocale
-                ><br />
-                <NuxtLinkLocale to="/privacy">{{
-                  copy('Privacy notice')
-                }}</NuxtLinkLocale
-                ><br />
-                <NuxtLinkLocale to="/support">{{
-                  copy('Support guides')
-                }}</NuxtLinkLocale>
-              </p>
-            </div>
-          </div>
-        </div>
-      </div>
-    </section>
-
     <CtaSection
       :title="copy('Rather just try it?')"
       :body="

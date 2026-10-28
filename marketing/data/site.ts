@@ -43,15 +43,13 @@ export const loopStages = [
   },
 ] as const
 
-/** Real customers only — never add a logo without the founder's confirmation. */
-export const customers = [
-  {
-    name: 'Tauview',
-    url: 'https://tauview.app',
-    logoLight: '/customers/tauview-light.png',
-    logoDark: '/customers/tauview-dark.png',
-  },
-]
+/** Add customer logos only with the customer's written permission. */
+export const customers: Array<{
+  name: string
+  url: string
+  logoLight: string
+  logoDark: string
+}> = []
 
 export const primaryNav = [
   { label: 'Features', to: '/features' },

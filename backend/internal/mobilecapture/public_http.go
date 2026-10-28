@@ -15,12 +15,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/acidiney/app.fidibeki/backend/internal/abuse"
-	"github.com/acidiney/app.fidibeki/backend/internal/api"
-	"github.com/acidiney/app.fidibeki/backend/internal/db"
-	"github.com/acidiney/app.fidibeki/backend/internal/feedback"
-	"github.com/acidiney/app.fidibeki/backend/internal/httpx"
-	"github.com/acidiney/app.fidibeki/backend/internal/project"
+	"github.com/fidibeki/app.fidibeki/backend/internal/abuse"
+	"github.com/fidibeki/app.fidibeki/backend/internal/api"
+	"github.com/fidibeki/app.fidibeki/backend/internal/db"
+	"github.com/fidibeki/app.fidibeki/backend/internal/feedback"
+	"github.com/fidibeki/app.fidibeki/backend/internal/httpx"
+	"github.com/fidibeki/app.fidibeki/backend/internal/project"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
