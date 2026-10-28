@@ -72,7 +72,7 @@ test("structured data parses on every route", async ({ request }) => {
     expect(blocks.length, `${route} should embed JSON-LD`).toBeGreaterThan(0);
     const types = new Set<string>();
     for (const block of blocks) {
-      const parsed = JSON.parse(block[1]) as { "@type"?: string };
+      const parsed = JSON.parse(block[1] ?? "{}") as { "@type"?: string };
       expect(parsed["@type"], `${route} JSON-LD type`).toBeTruthy();
       types.add(parsed["@type"]!);
     }
@@ -97,7 +97,7 @@ test("home and pricing expose verified offers", async ({ request }) => {
       ),
     ];
     const app = blocks
-      .map((block) => JSON.parse(block[1]) as Record<string, unknown>)
+      .map((block) => JSON.parse(block[1] ?? "{}") as Record<string, unknown>)
       .find((data) => data["@type"] === "SoftwareApplication");
     expect(app, `${route} SoftwareApplication`).toBeTruthy();
     const offers = app!.offers as { price: string }[];

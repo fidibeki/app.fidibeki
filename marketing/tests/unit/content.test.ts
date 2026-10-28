@@ -155,7 +155,7 @@ describe('content integrity', () => {
     expect(plans.map((plan) => plan.id)).toEqual(['starter', 'growth', 'scale', 'enterprise'])
     const priced = plans.filter((plan) => plan.monthlyPriceCents !== null)
     for (let index = 1; index < priced.length; index += 1) {
-      expect(priced[index].monthlyPriceCents!).toBeGreaterThan(priced[index - 1].monthlyPriceCents!)
+      expect(priced[index]!.monthlyPriceCents!).toBeGreaterThan(priced[index - 1]!.monthlyPriceCents!)
     }
   })
 })

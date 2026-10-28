@@ -18,7 +18,7 @@ function parseIP(value: string): ParsedIP | undefined {
   if (version !== 6) return undefined
 
   const pieces = normalized.split('::', 2)
-  let left = pieces[0]
+  let left = pieces[0] ?? ''
   let right = pieces[1]
   // Node can report IPv4-mapped IPv6 peers (for example ::ffff:127.0.0.1).
   // Expand the dotted tail before interpreting each 16-bit group.
@@ -40,7 +40,7 @@ function parseIP(value: string): ParsedIP | undefined {
 function isWithinCIDR(address: ParsedIP, cidr: string): boolean {
   const [network, prefixText, ...rest] = cidr.trim().split('/')
   if (rest.length || !prefixText) return false
-  const parsedNetwork = parseIP(network)
+  const parsedNetwork = parseIP(network ?? '')
   const prefix = Number(prefixText)
   if (!parsedNetwork || parsedNetwork.bits !== address.bits || !Number.isInteger(prefix) || prefix < 0 || prefix > address.bits) return false
   if (prefix === 0) return true

@@ -31,5 +31,13 @@ export default defineNuxtConfig({
     baseDomain: process.env.BACKOFFICE_BASE_DOMAIN || developmentBaseDomain,
     trustedProxyCIDRs: process.env.BACKOFFICE_TRUSTED_PROXY_CIDRS || (process.env.NODE_ENV === 'development' ? '127.0.0.0/8,::1/128' : ''),
   },
-  typescript: { strict: true, typeCheck: true },
+  typescript: {
+    strict: true,
+    typeCheck: true,
+    tsConfig: {
+      compilerOptions: {
+        noUncheckedIndexedAccess: false,
+      },
+    },
+  },
 })

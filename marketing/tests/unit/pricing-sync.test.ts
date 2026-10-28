@@ -46,7 +46,7 @@ const goNames: Record<string, string> = {
 
 describe('pricing data mirrors the backend plan catalog', () => {
   for (const plan of plans) {
-    const block = backendPlanBlock(goNames[plan.id])
+    const block = backendPlanBlock(goNames[plan.id]!)
 
     it(`matches ${plan.id} price`, () => {
       if (plan.monthlyPriceCents === null) {

@@ -79,7 +79,7 @@ export function useSiteMeta(source: SiteMetaOptions | (() => SiteMetaOptions)) {
           type: 'text/markdown',
           href: `${siteUrl}${markdownPath(pagePath)}`,
         },
-        { rel: 'describedby', type: 'text/plain', href: `${siteUrl}/llms.txt` },
+        { rel: 'alternate', type: 'text/plain', href: `${siteUrl}/llms.txt` },
       ],
       meta: [
         { name: 'description', content: copy(options.description) },

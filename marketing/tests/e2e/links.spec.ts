@@ -13,7 +13,7 @@ test('no internal link is broken', async ({ request }) => {
     expect(response.status(), route).toBe(200)
     const html = await response.text()
     for (const match of html.matchAll(/href="([^"#]+)(#[^"]*)?"/g)) {
-      const href = match[1]
+      const href = match[1] ?? ''
       if (
         href.startsWith('/') &&
         !href.startsWith('//') &&

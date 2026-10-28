@@ -13,7 +13,7 @@ require (
 	github.com/beevik/etree v1.6.0
 	github.com/crewjam/saml v0.5.1
 	github.com/getsentry/sentry-go v0.48.0
-	github.com/go-chi/chi/v5 v5.2.4
+	github.com/go-chi/chi/v5 v5.4.0
 	github.com/go-redis/redis_rate/v10 v10.0.1
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/golang-migrate/migrate/v4 v4.18.3

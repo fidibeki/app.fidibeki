@@ -15,7 +15,7 @@
     "@lucide/vue": "1.25.0",
     "@nuxtjs/i18n": "10.6.0",
     "highlight.js": "^11.11.1",
-    "nuxt": "3.21.10",
+    "nuxt": "4.6.2",
     "re2js": "2.8.6",
     "rrweb-player": "2.1.1",
     "vue": "3.5.40",
@@ -24,7 +24,7 @@
   "devDependencies": {
     "@playwright/test": "1.61.1",
     "typescript": "5.9.3",
-    "vitest": "4.1.10",
+    "vitest": "4.1.12",
     "vue-tsc": "3.2.5"
   }
 }

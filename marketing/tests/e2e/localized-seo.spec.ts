@@ -22,7 +22,7 @@ for (const locale of marketingLocales) {
       expect([...html.matchAll(/<h1[\s>]/g)], url).toHaveLength(1)
       const canonical = [...html.matchAll(/<link\b[^>]*rel="canonical"[^>]*>/g)]
       expect(canonical, url).toHaveLength(1)
-      expect(canonical[0][0], url).toContain(`href="${origin}${url}"`)
+      expect(canonical[0]?.[0] ?? '', url).toContain(`href="${origin}${url}"`)
       for (const other of marketingLocales) {
         const alternate = [
           ...html.matchAll(/<link\b[^>]*hreflang="([^"]+)"[^>]*>/g),
@@ -55,7 +55,7 @@ for (const locale of marketingLocales) {
       for (const block of html.matchAll(
         /<script type="application\/ld\+json">([\s\S]*?)<\/script>/g,
       )) {
-        const data = JSON.parse(block[1])
+        const data = JSON.parse(block[1] ?? '{}')
         if (data['@type'] === 'BreadcrumbList') {
           for (const crumb of data.itemListElement) {
             expect(new URL(crumb.item).pathname, url).toBe(
@@ -88,7 +88,8 @@ test('llms.txt has a concise index of real Markdown documents', async ({
   const links = [...text.matchAll(/\]\((https:\/\/fidibeki\.com[^)]+)\)/g)]
   expect(links.length).toBeGreaterThan(10)
   for (const [, href] of links) {
-    const page = await request.get(new URL(href).pathname)
+    expect(href).toBeTruthy()
+    const page = await request.get(new URL(href!).pathname)
     expect(page.status(), href).toBe(200)
     expect(page.headers()['content-type'], href).toContain('text/markdown')
   }

@@ -169,7 +169,7 @@ for (const locale of ['pt', 'es', 'fr']) {
               nodes.map((node) => node.getBoundingClientRect().height),
             )
           expect(cards).toHaveLength(2)
-          expect(Math.abs(cards[0] - cards[1])).toBeLessThan(2)
+          expect(Math.abs(cards[0]! - cards[1]!)).toBeLessThan(2)
         }
       }
     }
@@ -186,7 +186,7 @@ test('switching language updates page metadata and pricing content in the same n
   for (const [lang, prefix, title, question] of [
     ['en', '', 'Pricing', 'Every new workspace'],
     ['pt-PT', '/pt', 'Preços', 'Cada novo espaço de trabalho'],
-  ]) {
+  ] as const) {
     await page.locator('.header-language button').click()
     await page.locator(`.header-language a[lang="${lang}"]`).click()
     await expect(page).toHaveURL(new RegExp(`${prefix}/pricing$`))
